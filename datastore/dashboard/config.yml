@@ -88,3 +88,7 @@ services:
         icon: "fa-solid fa-magnifying-glass"
         subtitle: "Dozzle"
         url: "javascript:void(window.open(`//${location.hostname}/logs`))"
+      - name: "Sheets"
+        icon: "fa-solid fa-table"
+        subtitle: "Grist"
+        url: "javascript:void(window.open(`//${location.hostname}:8484/`))"

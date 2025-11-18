@@ -120,7 +120,7 @@ YAML
     applied=1
   else
     # Update only if not already using NetworkManager
-    if ! grep -Eq '^[[:space:]]*renderer:[[:space:]]*NetworkManager[[:space:]]*$' "$netplan_file"; then
+    if ! sudo grep -Eq '^[[:space:]]*renderer:[[:space:]]*NetworkManager[[:space:]]*$' "$netplan_file"; then
       msg "Updating Netplan to use NetworkManager renderer..."
       sudo sed -i 's/^[[:space:]]*renderer:[[:space:]]*.*/  renderer: NetworkManager/' "$netplan_file"
       applied=1

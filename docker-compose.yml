@@ -103,6 +103,17 @@ services:
       - "traefik.http.routers.homer.priority=1"
       - "traefik.http.services.homer.loadbalancer.server.port=8080"
 
+  grist:
+    image: gristlabs/grist
+    profiles:
+      - sheets
+    container_name: grist
+    restart: unless-stopped
+    ports:
+      - "8484:8484"
+    volumes:
+      - ./datastore/grist:/persist
+
   dozzle:
     image: amir20/dozzle:latest
     container_name: log-viewer
