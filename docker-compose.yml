@@ -1,7 +1,7 @@
 services:
 
   traefik:
-    image: traefik:v3.1
+    image: traefik:v3.6
     container_name: traefik
     restart: unless-stopped
     ports:
@@ -48,6 +48,8 @@ services:
   homeassistant:
     container_name: homeassistant
     image: "ghcr.io/home-assistant/home-assistant:stable"
+    profiles:
+      - ha
     ports:
       - "8123:8123"
     volumes:
@@ -76,7 +78,7 @@ services:
       - PUID=1000
       - PGID=1000
     volumes:
-      - ./src/automations:/config/workspace:rw
+      - .:/config/workspace:rw
       - ./datastore/editor/settings:/config/data/User/
       - ./datastore/editor/settings/snippets:/config/data/User/snippets
     labels:
@@ -121,10 +123,24 @@ services:
   contentshare:
     image: tanq16/local-content-share:main
     container_name: local-content-share
+    restart: unless-stopped
     ports:
       - "8090:8080"
     volumes:
       - ./datastore/contentshare:/app/data
+
+  public_http:
+    image: nginx:alpine
+    container_name: public
+    restart: unless-stopped
+    volumes:
+      - ./src/public:/usr/share/nginx/html:ro
+      - ./datastore/public/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.public.rule=PathPrefix(`/public`)"
+      - "traefik.http.routers.public.entrypoints=web"
+      - "traefik.http.services.public.loadbalancer.server.port=80"
 
   tailscale:
     image: tailscale/tailscale:latest
