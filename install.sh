@@ -89,9 +89,16 @@ select_profiles_if_needed() {
 
 # ---- NetworkManager ----------------------------------------------------------
 ensure_networkmanager_for_cockpit() {
-  local applied=0
+  # Skip on WSL to avoid fighting Docker Desktop networking
+  if grep -qi microsoft /proc/version 2>/dev/null; then
+    msg "WSL detected — skipping NetworkManager/Netplan setup."
+    return 0
+  fi
 
-  # Install NetworkManager if missing
+  local applied=0
+  local netplan_file="/etc/netplan/01-network-manager.yaml"
+
+  # 1) Install NetworkManager if missing
   if ! have_pkg network-manager; then
     msg "Installing NetworkManager..."
     sudo apt-get update -y
@@ -99,18 +106,27 @@ ensure_networkmanager_for_cockpit() {
     applied=1
   fi
 
-  # Enable NetworkManager and disable systemd-networkd if necessary
-  if ! systemctl is-active --quiet NetworkManager || systemctl is-active --quiet systemd-networkd; then
-    msg "Enabling NetworkManager and disabling systemd-networkd..."
-    sudo systemctl disable --now systemd-networkd || true
-    sudo systemctl enable --now NetworkManager
+  # 2) Make NM ignore Docker/Tailscale/etc (but still see physical NICs)
+  sudo mkdir -p /etc/NetworkManager/conf.d
+  if ! grep -qs 'unmanaged-devices' /etc/NetworkManager/conf.d/99-unmanage-docker.conf 2>/dev/null; then
+    msg "Configuring NetworkManager to ignore Docker/Tailscale interfaces..."
+    sudo tee /etc/NetworkManager/conf.d/99-unmanage-docker.conf >/dev/null <<'CONF'
+[keyfile]
+unmanaged-devices=interface-name:docker0;interface-name:veth*;interface-name:br-*;interface-name:containerd*;interface-name:tailscale0
+CONF
     applied=1
   fi
 
-
-  # Ensure Netplan uses NetworkManager as renderer
-  local netplan_file="/etc/netplan/01-network-manager.yaml"
+  # 3) Own netplan: backup any existing YAML once, then create a single minimal file
   if [[ ! -f "$netplan_file" ]]; then
+    if ls /etc/netplan/*.yml /etc/netplan/*.yaml >/dev/null 2>&1; then
+      msg "Backing up existing Netplan configs..."
+      sudo mkdir -p /etc/netplan/backup
+      for f in /etc/netplan/*.yml /etc/netplan/*.yaml; do
+        [ -f "$f" ] && sudo mv "$f" "/etc/netplan/backup/$(basename "$f").bak"
+      done
+    fi
+
     msg "Creating minimal Netplan config for NetworkManager..."
     sudo tee "$netplan_file" >/dev/null <<'YAML'
 network:
@@ -119,51 +135,57 @@ network:
 YAML
     applied=1
   else
-    # Update only if not already using NetworkManager
-    if ! sudo grep -Eq '^[[:space:]]*renderer:[[:space:]]*NetworkManager[[:space:]]*$' "$netplan_file"; then
+    # If the file exists but does not specify NetworkManager as renderer, fix it
+    if ! grep -Eq '^[[:space:]]*renderer:[[:space:]]*NetworkManager[[:space:]]*$' "$netplan_file"; then
       msg "Updating Netplan to use NetworkManager renderer..."
       sudo sed -i 's/^[[:space:]]*renderer:[[:space:]]*.*/  renderer: NetworkManager/' "$netplan_file"
       applied=1
     fi
   fi
 
-  # Ensure secure perms/ownership (fix the warning even if unchanged)
+  # Permissions (primarily to remove warning)
   sudo chown root:root "$netplan_file"
   sudo chmod 600 "$netplan_file"
 
-  # Ensure secure perms/ownership (fix the warning even if unchanged)
-  sudo chown root:root "$netplan_file"
-  sudo chmod 600 "$netplan_file"
+  # 4) Switch services if needed
+  if ! systemctl is-active --quiet NetworkManager || systemctl is-active --quiet systemd-networkd; then
+    msg "Enabling NetworkManager and disabling systemd-networkd..."
+    sudo systemctl disable --now systemd-networkd || true
+    sudo systemctl enable --now NetworkManager
+    applied=1
+  fi
 
-  # Wait briefly for NetworkManager to finish initializing before applying netplan
-  if [[ ${applied:-0} -eq 1 ]]; then
-    msg "Waiting for NetworkManager..."
+  # 5) Apply netplan (non-fatal), with a small wait/retry
+  if [[ $applied -eq 1 ]]; then
+    msg "Waiting for NetworkManager to stabilize before applying Netplan..."
     for i in {1..10}; do
       if systemctl is-active --quiet NetworkManager; then
         break
       fi
       sleep 0.5
     done
-
-    # Small grace delay even if NM is up (avoids race on first start)
     sleep 1
 
     msg "Applying Netplan..."
-    sudo netplan generate || true
+    sudo netplan generate || msg "netplan generate failed (non-fatal)."
+
     if ! sudo netplan apply; then
-      msg "Netplan apply failed once, retrying in 2s..."
+      msg "Netplan apply failed once, retrying in 2s (non-fatal failure allowed)..."
       sleep 2
-      sudo netplan apply || true
+      if ! sudo netplan apply; then
+        msg "Netplan apply still failing; continuing anyway. Cockpit/NetworkManager may still work once the system settles."
+      fi
     fi
   fi
 
-  # Verify final state
+  # 6) Final check (non-fatal)
   if systemctl is-active --quiet NetworkManager; then
-    msg "NetworkManager is active and ready for Cockpit."
+    msg "NetworkManager is active; physical interfaces will be manageable in Cockpit."
   else
-    die "NetworkManager did not start correctly. Check with: journalctl -u NetworkManager"
+    msg "⚠️ NetworkManager is not active. Check: journalctl -u NetworkManager"
   fi
 }
+
 
 # ---- Steps -------------------------------------------------------------------
 install_cockpit() {
