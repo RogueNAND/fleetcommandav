@@ -26,6 +26,9 @@ services:
 
   companion:
     image: "ghcr.io/roguenand/companion:latest"
+    profiles:
+      - all
+      - ontime
     container_name: companion
     restart: unless-stopped
     network_mode: host
@@ -49,6 +52,7 @@ services:
     container_name: homeassistant
     image: "ghcr.io/home-assistant/home-assistant:stable"
     profiles:
+      - all
       - ha
     ports:
       - "8123:8123"
@@ -106,6 +110,7 @@ services:
   grist:
     image: gristlabs/grist
     profiles:
+      - all
       - sheets
     container_name: grist
     restart: unless-stopped
@@ -133,6 +138,9 @@ services:
 
   contentshare:
     image: tanq16/local-content-share:main
+    profiles:
+      - all
+      - share
     container_name: local-content-share
     restart: unless-stopped
     ports:
@@ -142,6 +150,9 @@ services:
 
   public_http:
     image: nginx:alpine
+    profiles:
+      - all
+      - public
     container_name: public
     restart: unless-stopped
     volumes:
@@ -155,6 +166,9 @@ services:
 
   tailscale:
     image: tailscale/tailscale:latest
+    profiles:
+      - all
+      - vpn
     container_name: vpn
     restart: unless-stopped
     network_mode: host

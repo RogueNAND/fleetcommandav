@@ -135,11 +135,26 @@ YAML
   sudo chown root:root "$netplan_file"
   sudo chmod 600 "$netplan_file"
 
-  # Apply Netplan only if something changed
-  if [[ $applied -eq 1 ]]; then
+  # Wait briefly for NetworkManager to finish initializing before applying netplan
+  if [[ ${applied:-0} -eq 1 ]]; then
+    msg "Waiting for NetworkManager..."
+    for i in {1..10}; do
+      if systemctl is-active --quiet NetworkManager; then
+        break
+      fi
+      sleep 0.5
+    done
+
+    # Small grace delay even if NM is up (avoids race on first start)
+    sleep 1
+
     msg "Applying Netplan..."
-    sudo netplan generate
-    sudo netplan apply
+    sudo netplan generate || true
+    if ! sudo netplan apply; then
+      msg "Netplan apply failed once, retrying in 2s..."
+      sleep 2
+      sudo netplan apply || true
+    fi
   fi
 
   # Verify final state
