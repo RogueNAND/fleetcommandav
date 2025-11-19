@@ -1,10 +1,11 @@
 import asyncio
 import itertools
 import json
-from pathlib import Path
 import re
+import traceback
 import websockets
 from collections import defaultdict
+from pathlib import Path
 
 class Companion:
     def __init__(self, url="ws://127.0.0.1:16621"):
@@ -139,7 +140,15 @@ class Companion:
             else:
                 handler(arg)
         except Exception as e:
-            print(f"⚠️ Handler error in {handler.__name__}: {e}")
+            handler_name = getattr(handler, "__qualname__", getattr(handler, "__name__", repr(handler)))
+            print(f"⚠️ Handler error in {handler_name}")
+            try:
+                print(f"   Payload: {repr(arg)}")
+            except Exception:
+                print("   Payload: <unrepresentable>")
+
+            print("   Traceback:")
+            traceback.print_exc()
 
     # ----------------------------------------------------------------------
     # Communication Loops
