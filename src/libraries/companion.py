@@ -7,6 +7,8 @@ import websockets
 from collections import defaultdict
 from pathlib import Path
 
+CONNECTION_STATUS_OK = ('good', 'ok')
+
 class Companion:
     def __init__(self, url="ws://127.0.0.1:16621"):
         self.url = url
@@ -15,6 +17,8 @@ class Companion:
         # handler registries
         self._var_change_handlers = defaultdict(list)  # (connection, type, key) -> list[handlers]
         self._button_handlers = defaultdict(list)      # (page, x, y, type) -> list[handlers]
+        self._connect_handlers = defaultdict(list)     # connection -> handlers
+        self._connect_state = {}                       # connection -> last known status ("good", etc.)
         self._snippet_regen_task = None
 
         # requests and communication
@@ -73,6 +77,22 @@ class Companion:
             return func
         return decorator
 
+    def on_connect(self, connection):
+        """
+        Fires when a Companion connection enters status 'good'.
+        Triggers on:
+        - initial snapshot
+        - reconnect inside Companion
+        - Python websocket reconnect
+        - status flipping to 'good' via variable updates
+        """
+
+        def decorator(func):
+            self._connect_handlers[connection].append(func)
+            return func
+
+        return decorator
+
     async def action(self, connection, action_id, options=None):
         return await self._call(
             "runConnectionAction",
@@ -115,6 +135,9 @@ class Companion:
 
     async def _dispatch(self, connection, updates):
         for var, value in updates.items():
+            if var.startswith("connection_") and var.endswith("_status"):
+                connection_name = var[len("connection_"):-len("_status")]
+                self._handle_connection_status_update(connection_name, value)
             for (conn, match_type, key), handlers in self._var_change_handlers.items():
                 if conn != connection:
                     continue
@@ -131,6 +154,21 @@ class Companion:
                 if matched:
                     for h in handlers:
                         asyncio.create_task(self._safe_handler_call(h, (var, value)))
+
+    def _handle_connection_status_update(self, connection, new_status):
+        """Internal handler for connection status variables."""
+        old_status = self._connect_state.get(connection)
+
+        # Only fire when entering "ok"
+        if new_status in CONNECTION_STATUS_OK and old_status not in CONNECTION_STATUS_OK:
+            self._connect_state[connection] = new_status
+            self._trigger_connect_handlers(connection)
+        else:
+            self._connect_state[connection] = new_status
+
+    def _trigger_connect_handlers(self, connection):
+        for h in self._connect_handlers.get(connection, []):
+            asyncio.create_task(self._safe_handler_call(h, connection))
 
     async def _safe_handler_call(self, handler, arg):
         """Run handler safely in its own task."""
@@ -183,6 +221,13 @@ class Companion:
             if data.get("id") == 1 and "result" in data:
                 result = data["result"]
                 if isinstance(result, dict):
+                    # Update connection status
+                    for connection, vars_dict in result.items():
+                        for var, value in vars_dict.items():
+                            if var.startswith("connection_") and var.endswith("_status"):
+                                conn_name = var[len("connection_"):-len("_status")]
+                                self._handle_connection_status_update(conn_name, value)
+
                     self.variables.update(result)
                     self.generate_snippets()
                 print(f"📥 Cached variables for {len(self.variables)} connections")
@@ -312,6 +357,21 @@ class Companion:
         """
 
         snippets = {}
+
+        connections = sorted(actions_json.keys())
+        if connections:
+            # VSCode choice list: ${1|vmix,atem,internal|}
+            choice_str = ",".join(connections)
+
+            snippets["companion_on_connect"] = {
+                "prefix": "@companion.on_connect",
+                "body": [
+                    f"@companion.on_connect(\"${{1|{choice_str}|}}\")\n"
+                    f"async def ${{2:handler_name}}(connection):\n"
+                    f"    ${{3:pass}}"
+                ],
+                "description": "on_connect decorator with connection dropdown",
+            }
 
         for connection, actions in actions_json.items():
             for action_id, action_def in actions.items():
