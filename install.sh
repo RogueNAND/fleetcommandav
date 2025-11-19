@@ -87,6 +87,7 @@ select_profiles_if_needed() {
   fi
 }
 
+
 # ---- NetworkManager ----------------------------------------------------------
 ensure_networkmanager_for_cockpit() {
   # Skip on WSL to avoid fighting Docker Desktop networking
@@ -105,6 +106,8 @@ ensure_networkmanager_for_cockpit() {
     sudo apt-get install -y network-manager
     applied=1
   fi
+
+  ensure_wifi_support
 
   # 2) Make NM ignore Docker/Tailscale/etc (but still see physical NICs)
   sudo mkdir -p /etc/NetworkManager/conf.d
@@ -136,7 +139,7 @@ YAML
     applied=1
   else
     # If the file exists but does not specify NetworkManager as renderer, fix it
-    if ! grep -Eq '^[[:space:]]*renderer:[[:space:]]*NetworkManager[[:space:]]*$' "$netplan_file"; then
+    if ! sudo grep -Eq '^[[:space:]]*renderer:[[:space:]]*NetworkManager[[:space:]]*$' "$netplan_file"; then
       msg "Updating Netplan to use NetworkManager renderer..."
       sudo sed -i 's/^[[:space:]]*renderer:[[:space:]]*.*/  renderer: NetworkManager/' "$netplan_file"
       applied=1
@@ -178,12 +181,34 @@ YAML
     fi
   fi
 
+  sleep 1
+
   # 6) Final check (non-fatal)
-  if systemctl is-active --quiet NetworkManager; then
-    msg "NetworkManager is active; physical interfaces will be manageable in Cockpit."
-  else
-    msg "⚠️ NetworkManager is not active. Check: journalctl -u NetworkManager"
+  for i in {1..3}; do
+    if systemctl is-active --quiet NetworkManager; then
+      msg "NetworkManager is active; physical interfaces will be manageable in Cockpit."; return 0
+    fi
+    sleep 1
+  done
+  msg "⚠️ NetworkManager is not active after retries. Check: journalctl -u NetworkManager"
+}
+
+ensure_wifi_support() {
+  # Detect any Wi-Fi interfaces (wl*)
+  if ! ls /sys/class/net/wl* >/dev/null 2>&1; then
+    # No Wi-Fi NICs present; nothing to do
+    return 0
   fi
+
+  msg "Wi-Fi interface detected; ensuring wpa_supplicant is available..."
+
+  if ! have_pkg wpasupplicant; then
+    sudo apt-get update -y
+    sudo apt-get install -y wpasupplicant
+  fi
+
+  # Explicitly make sure the service is enabled
+  sudo systemctl enable --now wpa_supplicant || true
 }
 
 
@@ -282,11 +307,12 @@ sudo apt-get update -y && sudo apt-get upgrade -y
 
 git config --global core.autocrlf input
 
-ensure_networkmanager_for_cockpit
-install_cockpit
 install_docker
 deploy
 check_tailscale
+
+ensure_networkmanager_for_cockpit
+install_cockpit
 
 ip=$(hostname -I 2>/dev/null | awk '{print $1}')
 msg "Setup complete 👍"
