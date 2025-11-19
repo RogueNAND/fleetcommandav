@@ -26,9 +26,6 @@ services:
 
   companion:
     image: "ghcr.io/roguenand/companion:latest"
-    profiles:
-      - all
-      - ontime
     container_name: companion
     restart: unless-stopped
     network_mode: host
@@ -37,6 +34,9 @@ services:
 
   ontime:
     image: getontime/ontime:latest
+    profiles:
+      - all
+      - ontime
     container_name: ontime
     restart: unless-stopped
     ports:
