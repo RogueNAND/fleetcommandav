@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import itertools
 import json
 import re
@@ -93,6 +94,46 @@ class Companion:
 
         return decorator
 
+    def requires(self, *connections):
+        """
+        Decorator that short-circuits the wrapped function unless
+        all specified connections have status 'ok'.
+
+        Usage:
+            @companion.requires("vmix")
+            async def handler(...): ...
+
+            @companion.requires("vmix", "atem")
+            async def handler(...): ...
+
+            @companion.requires(["vmix", "atem"])
+            async def handler(...): ...
+        """
+
+        if len(connections) == 1 and isinstance(connections[0], (list, tuple, set, frozenset)):
+            required = tuple(connections[0])
+        else:
+            required = tuple(connections)
+
+        def decorator(func):
+            @functools.wraps(func)
+            async def wrapper(arg):
+                if not self._are_connections_ready(required):
+                    print(f"⏭ requires skipped {func.__name__}, missing: {','.join(required)}")  # TODO: debug log
+                    return
+                if asyncio.iscoroutinefunction(func):
+                    return await func(arg)
+                else:
+                    return func(arg)
+
+            # Optionally store metadata for introspection
+            wrapper._companion_requires = required
+
+            return wrapper
+
+        return decorator
+
+
     async def action(self, connection, action_id, options=None):
         return await self._call(
             "runConnectionAction",
@@ -169,6 +210,17 @@ class Companion:
     def _trigger_connect_handlers(self, connection):
         for h in self._connect_handlers.get(connection, []):
             asyncio.create_task(self._safe_handler_call(h, connection))
+
+    def _are_connections_ready(self, required_connections):
+        """
+        Return True if all required connections have status 'ok'.
+        """
+        for conn in required_connections:
+            status = self._connect_state.get(conn)
+            if status not in CONNECTION_STATUS_OK:
+                return False
+        return True
+
 
     async def _safe_handler_call(self, handler, arg):
         """Run handler safely in its own task."""
@@ -371,6 +423,14 @@ class Companion:
                     f"    ${{3:pass}}"
                 ],
                 "description": "on_connect decorator with connection dropdown",
+            }
+
+            snippets["companion_requires"] = {
+                "prefix": "@companion.requires",
+                "body": [
+                    f"@companion.requires(\"${{1|{choice_str}|}}\")"
+                ],
+                "description": "requires decorator with connection dropdown",
             }
 
         for connection, actions in actions_json.items():
