@@ -11,14 +11,20 @@ Event-based decorators:
   @companion.on_button_down(page, x, y)
   @companion.on_button_up(page, x, y)
   @companion.on_rotate(page, x, y)
+  @companion.on_connect(connection)
+  @companion.requires(connection1, connection2, ...)
 
-Utilities:
+API:
   companion.action(connection, action_id, options={})   → Run any action on any connection
   companion.var(connection, var_name, default=None)     → Access current variable values
 
 💡 Tip:
   Create additional Python files in this directory to organize your automations!
 """
+
+# Cast all variables from strings to their equivalent data type
+# (Individual connections can be specified here)
+companion.enable_cast()
 
 # EXAMPLE 1: Log uptime every second
 @companion.on_change("internal", variable="time_s")
@@ -30,8 +36,7 @@ async def print_uptime_every_second(event):
 # EXAMPLE 2: React to a variable prefix (e.g. all VMix inputs)
 @companion.on_change("vmix", prefix="input_")
 async def vmix_input_change(event):
-    var, value = event
-    print(f"🎬 VMix variable changed: {var} = {value}")
+    print(f"🎬 VMix variable changed: {event.variable} = {event.value}")
 
 
 # EXAMPLE 3: React to a button press on page 1, column 2, row 3

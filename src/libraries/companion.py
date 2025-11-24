@@ -10,10 +10,20 @@ from pathlib import Path
 
 CONNECTION_STATUS_OK = ('good', 'ok')
 
+class Event:
+    def __init__(self, connection=None, var=None, value=None, last_vars=None,
+                 surface=None, page=None, x=None, y=None, event=None):
+        self.connection: str = connection
+        self.variable: str = var
+        self.value = value
+        self.last = (last_vars or {}).get(var, None)
+        self.lasts: dict[str, dict] = last_vars or defaultdict(dict)
+
 class Companion:
     def __init__(self, url="ws://127.0.0.1:16621"):
         self.url = url
         self.variables = {}
+        self._cast_connections = set()
 
         # handler registries
         self._var_change_handlers = defaultdict(list)  # (connection, type, key) -> list[handlers]
@@ -133,7 +143,6 @@ class Companion:
 
         return decorator
 
-
     async def action(self, connection, action_id, options=None):
         return await self._call(
             "runConnectionAction",
@@ -145,6 +154,47 @@ class Companion:
 
     def var(self, connection, var, default=None):
         return self.variables.get(connection, {}).get(var, default)
+
+    async def _update_variables(self, variables: dict[str, dict], dispatch=True):
+        last_vars = self.variables.copy()
+
+        for connection, vars_dict in variables.items():
+
+            # Update connection status
+            for var, value in vars_dict.items():
+                if var.startswith("connection_") and var.endswith("_status"):
+                    conn_name = var[len("connection_"):-len("_status")]
+                    self._handle_connection_status_update(conn_name, value, var, last_vars)
+
+            # Cast variable (if applicable)
+            if (self._cast_connections is None) or (connection in self._cast_connections):
+                for var, value in vars_dict.items():
+                    vars_dict[var] = self._smart_cast(value)
+
+            self.variables.setdefault(connection, {}).update(vars_dict)
+
+        if dispatch:
+            for connection, vars_dict in variables.items():
+                await self._dispatch(connection, vars_dict, last_vars)
+
+    def enable_cast(self, *connections):
+        """
+        Enable smart casting for specific connection labels, or all connections if left empty
+
+        When enabled, string values that look like booleans or numbers will
+        be converted to bool/int/float on updates.
+        """
+
+        if not connections:
+            self._cast_connections = None
+
+        if self._cast_connections is not None:
+            for connection in connections:
+                self._cast_connections.add(connection)
+
+                # Cast any existing variables
+                for k, v in self.variables.get(connection, {}).items():
+                    self.variables[connection][k] = self._smart_cast(v)
 
     # ----------------------------------------------------------------------
     # Public API
@@ -174,11 +224,8 @@ class Companion:
     # Internal Dispatch
     # ----------------------------------------------------------------------
 
-    async def _dispatch(self, connection, updates):
+    async def _dispatch(self, connection, updates, last_vars):
         for var, value in updates.items():
-            if var.startswith("connection_") and var.endswith("_status"):
-                connection_name = var[len("connection_"):-len("_status")]
-                self._handle_connection_status_update(connection_name, value)
             for (conn, match_type, key), handlers in self._var_change_handlers.items():
                 if conn != connection:
                     continue
@@ -194,22 +241,76 @@ class Companion:
 
                 if matched:
                     for h in handlers:
-                        asyncio.create_task(self._safe_handler_call(h, (var, value)))
+                        event = Event(
+                            connection=connection,
+                            var=var,
+                            value=value,
+                            last_vars=last_vars,
+                            event='variables_changed'
+                        )
+                        asyncio.create_task(self._safe_handler_call(h, event))
 
-    def _handle_connection_status_update(self, connection, new_status):
+    @staticmethod
+    def _smart_cast(value):
+        """
+        Conservative smart cast:
+        - leave non-strings alone
+        - 'true'/'false' (case-insensitive) -> bool
+        - '1'/'0' -> int
+        - pure digit / simple float strings -> int/float
+        Everything else stays as-is.
+        """
+        if value is None:
+            return value
+        if not isinstance(value, str):
+            return value
+
+        s = value.strip()
+        if not s:
+            return value
+
+        lower = s.lower()
+
+        # Booleans
+        if lower == "true":
+            return True
+        if lower == "false":
+            return False
+
+        # Simple integer (no sign, no decimal)
+        if re.fullmatch(r"\d+", s):
+            try:
+                return int(s)
+            except ValueError:
+                return value
+
+        # Simple float (optional leading digits, one dot, optional trailing digits)
+        if re.fullmatch(r"\d+\.\d+|\d+\.\d*|\.\d+", s):
+            try:
+                return float(s)
+            except ValueError:
+                return value
+
+        return value
+
+    def _handle_connection_status_update(self, connection, new_status, var_name, last_vars):
         """Internal handler for connection status variables."""
         old_status = self._connect_state.get(connection)
 
         # Only fire when entering "ok"
         if new_status in CONNECTION_STATUS_OK and old_status not in CONNECTION_STATUS_OK:
             self._connect_state[connection] = new_status
-            self._trigger_connect_handlers(connection)
+            for h in self._connect_handlers.get(connection, []):
+                event = Event(
+                    connection=connection,
+                    var=var_name,
+                    value=new_status,
+                    last_vars=last_vars,
+                    event='variables_changed'
+                )
+                asyncio.create_task(self._safe_handler_call(h, event))
         else:
             self._connect_state[connection] = new_status
-
-    def _trigger_connect_handlers(self, connection):
-        for h in self._connect_handlers.get(connection, []):
-            asyncio.create_task(self._safe_handler_call(h, connection))
 
     def _are_connections_ready(self, required_connections):
         """
@@ -221,19 +322,18 @@ class Companion:
                 return False
         return True
 
-
-    async def _safe_handler_call(self, handler, arg):
+    async def _safe_handler_call(self, handler, event: Event):
         """Run handler safely in its own task."""
         try:
             if asyncio.iscoroutinefunction(handler):
-                await handler(arg)
+                await handler(event)
             else:
-                handler(arg)
+                handler(event)
         except Exception as e:
             handler_name = getattr(handler, "__qualname__", getattr(handler, "__name__", repr(handler)))
             print(f"⚠️ Handler error in {handler_name}")
             try:
-                print(f"   Payload: {repr(arg)}")
+                print(f"   Payload: {repr(event)}")
             except Exception:
                 print("   Payload: <unrepresentable>")
 
@@ -273,14 +373,7 @@ class Companion:
             if data.get("id") == 1 and "result" in data:
                 result = data["result"]
                 if isinstance(result, dict):
-                    # Update connection status
-                    for connection, vars_dict in result.items():
-                        for var, value in vars_dict.items():
-                            if var.startswith("connection_") and var.endswith("_status"):
-                                conn_name = var[len("connection_"):-len("_status")]
-                                self._handle_connection_status_update(conn_name, value)
-
-                    self.variables.update(result)
+                    await self._update_variables(result, dispatch=False)
                     self.generate_snippets()
                 print(f"📥 Cached variables for {len(self.variables)} connections")
                 continue
@@ -294,9 +387,7 @@ class Companion:
                     existing_vars = self.variables.setdefault(connection, {})
                     variables_created = bool(set(updates.keys()) - set(existing_vars.keys()))
 
-                    # update internal variable states
-                    self.variables.setdefault(connection, {}).update(updates)
-                    await self._dispatch(connection, updates)
+                await self._update_variables(payload)
 
                 if variables_created:
                     print("📝 Detected new variables — regenerating snippets")
@@ -324,7 +415,15 @@ class Companion:
 
                 if type_key:
                     for h in self._button_handlers.get((page, x, y, type_key), []):
-                        asyncio.create_task(self._safe_handler_call(h, payload))
+                        event = Event(
+                            surface=payload.get("id"),
+                            page=payload.get("page"),
+                            x=payload.get("x"),
+                            y=payload.get("y"),
+                            event=payload.get("event"),
+                            value=payload.get("value"),
+                        )
+                        asyncio.create_task(self._safe_handler_call(h, event))
 
             # unknown
             else:
@@ -413,12 +512,12 @@ class Companion:
         connections = sorted(actions_json.keys())
         if connections:
             # VSCode choice list: ${1|vmix,atem,internal|}
-            choice_str = ",".join(connections)
+            connection_choices = ",".join(connections)
 
             snippets["companion_on_connect"] = {
                 "prefix": "@companion.on_connect",
                 "body": [
-                    f"@companion.on_connect(\"${{1|{choice_str}|}}\")\n"
+                    f"@companion.on_connect(\"${{1|{connection_choices}|}}\")\n"
                     f"async def ${{2:handler_name}}(connection):\n"
                     f"    ${{3:pass}}"
                 ],
@@ -428,9 +527,18 @@ class Companion:
             snippets["companion_requires"] = {
                 "prefix": "@companion.requires",
                 "body": [
-                    f"@companion.requires(\"${{1|{choice_str}|}}\")"
+                    f"@companion.requires(\"${{1|{connection_choices}|}}\")"
                 ],
                 "description": "requires decorator with connection dropdown",
+            }
+
+            snippets["companion_cast"] = {
+                "prefix": "companion.enable_cast",
+                "body": [
+                    "# Auto-cast variables for connection(s) (leave empty for all)\n"
+                    f"companion.enable_cast(\"${{1|{connection_choices}|}}\")"
+                ],
+                "description": "set connection(s) to auto-cast variables",
             }
 
         for connection, actions in actions_json.items():
