@@ -32,7 +32,6 @@ async def print_uptime_every_second(event):
     uptime = companion.var("internal", "uptime")
     print(f"🕒 Companion uptime: {uptime}s")
 
-
 # EXAMPLE 2: React to a variable prefix (e.g. all VMix inputs)
 @companion.on_change("vmix", prefix="input_")
 async def vmix_input_change(event):
@@ -40,7 +39,7 @@ async def vmix_input_change(event):
 
 
 # EXAMPLE 3: React to a button press on page 1, column 2, row 3
-@companion.on_button_down(page=1, x=2, y=3)
+@companion.on_button_down(page=1, x=3, y=0)
 async def handle_button_down(event):
     print("🔘 Button (1,2,3) pressed!")
 
@@ -49,7 +48,7 @@ async def handle_button_down(event):
 
 
 # EXAMPLE 4: Handle Stream Deck+ rotary knob rotation
-@companion.on_rotate(page=1, x=1, y=1)
+@companion.on_rotate(page=1, x=3, y=0)
 async def handle_knob_rotate(event):
-    direction = "right" if event.get("direction") else "left"
+    direction = "right" if event.value else "left"
     print(f"🎛️ Knob rotated {direction} at (1,1,1)")

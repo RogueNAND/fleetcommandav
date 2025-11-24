@@ -152,6 +152,35 @@ class Companion:
             extras={"surfaceId": "python-direct"}
         )
 
+    @staticmethod
+    async def action_multi(*coroutines, allow_partial: bool = False):
+        """
+        Run multiple Companion actions concurrently.
+
+        *coroutines: One or more awaitable objects (usually companion.action(...)).
+        allow_partial: If True, all actions are awaited even if some fail.
+                        Exceptions are returned as items in the result list
+                        instead of cancelling the other actions.
+
+        Returns:
+            List of results in the same order as the provided coroutines.
+            When allow_partial=True, failed items will be Exception instances.
+        """
+
+        if not coroutines:
+            return []
+
+        if allow_partial:
+            # Don't cancel other actions if one fails
+            results = await asyncio.gather(*coroutines, return_exceptions=True)
+            for idx, result in enumerate(results):
+                if isinstance(result, Exception):
+                    print(f"⚠️ action_multi item {idx} failed: {result}")
+            return results
+
+        else:
+            return await asyncio.gather(*coroutines)
+
     def var(self, connection, var, default=None):
         return self.variables.get(connection, {}).get(var, default)
 
@@ -539,6 +568,15 @@ class Companion:
                     f"companion.enable_cast(\"${{1|{connection_choices}|}}\")"
                 ],
                 "description": "set connection(s) to auto-cast variables",
+            }
+
+            snippets["companion_action_multi"] = {
+                "prefix": "companion.action_multi",
+                "body": [
+                    "# Run multiple simultaneous actions (or any coroutine)\n"
+                    f"companion.action_multi(\n    ${{1:}}\n)"
+                ],
+                "description": "Run multiple simultaneous actions",
             }
 
         for connection, actions in actions_json.items():
