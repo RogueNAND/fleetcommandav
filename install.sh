@@ -172,7 +172,6 @@ disable_sleep_targets() {
   sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target || true
 }
 
-
 # ---- Steps -------------------------------------------------------------------
 
 deploy() {
@@ -209,9 +208,9 @@ configure_tailscale() {
     already_logged_in=1
     msg "Tailscale is already logged in."
     prompt "Reconfigure Tailscale on this host anyway? [y/N]: "
-    local reconfig
-    read -r reconfig
-    if [[ ! "$reconfig" =~ ^[Yy]$ ]]; then
+    local reconfigure
+    read -r reconfigure
+    if [[ ! "$reconfigure" =~ ^[Yy]$ ]]; then
       msg "Keeping existing Tailscale configuration."
       return
     fi
@@ -360,7 +359,16 @@ EOF
 
 # ---- Main --------------------------------------------------------------------
 
-msg "Run as a regular user (sudo will be used as needed)."
+# Enforce non-root
+if [[ $EUID -eq 0 ]]; then
+  die "Do not run this script as root. Run it as a regular user with sudo privileges."
+fi
+
+# Prime sudo password early
+msg "Checking sudo access..."
+if ! sudo -v; then
+  die "This script requires sudo privileges."
+fi
 
 if [[ -t 0 ]]; then
   prompt "Run full system upgrade? [Y/n]: "
@@ -386,8 +394,8 @@ configure_power_button
 disable_sleep_targets
 
 # Deployment scripts
-deploy
 configure_tailscale
+deploy
 
 msg "Setup complete 👍"
 ip=$(ip -4 -o addr show scope global 2>/dev/null | awk 'NR==1 { sub(/\/.*/, "", $4); print $4 }')
