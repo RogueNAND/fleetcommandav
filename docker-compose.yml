@@ -4,6 +4,7 @@ services:
     image: traefik:v3.6
     container_name: traefik
     restart: unless-stopped
+    init: true
     ports:
       - "80:80"
       - "443:443"
@@ -19,18 +20,33 @@ services:
       - "--entrypoints.codeserver.address=:8443"
       # - "--api.dashboard=true"
       # - "--api.insecure=true" # only on trusted LAN
-
-      # Optional: redirect HTTP -> HTTPS later
-      # - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
-      # - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+    mem_limit: 256m
+    cpu_shares: 256
+    logging:
+      driver: journald
+      options:
+        tag: "traefik"
 
   companion:
     image: "ghcr.io/roguenand/companion:latest"
     container_name: companion
     restart: unless-stopped
     network_mode: host
+    init: true
     volumes:
       - ./datastore/companion:/companion
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/ || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+    mem_limit: 1500m
+    cpu_shares: 2048  # highest priority
+    logging:
+      driver: journald
+      options:
+        tag: "companion"
 
   ontime:
     image: getontime/ontime:latest
@@ -39,6 +55,7 @@ services:
       - ontime
     container_name: ontime
     restart: unless-stopped
+    init: true
     ports:
       - "4001:4001/tcp"
       - "8888:8888/udp"
@@ -47,6 +64,12 @@ services:
       - "./datastore/ontime:/data/"
     environment:
       - TZ=US/Eastern
+    mem_limit: 256m
+    cpu_shares: 256
+    logging:
+      driver: journald
+      options:
+        tag: "ontime"
 
   homeassistant:
     container_name: homeassistant
@@ -54,25 +77,38 @@ services:
     profiles:
       - all
       - ha
+    restart: unless-stopped
     ports:
       - "8123:8123"
     volumes:
       - ./datastore/homeassistant:/config
       - /etc/localtime:/etc/localtime:ro
       - /run/dbus:/run/dbus:ro
-    restart: unless-stopped
     privileged: true
+    mem_limit: 1024m
+    cpu_shares: 512
+    logging:
+      driver: journald
+      options:
+        tag: "homeassistant"
 
   python:
     build: ./src
     container_name: python
     restart: unless-stopped
     network_mode: host
+    init: true
     volumes:
       - ./src:/indirector
       - ./datastore/editor/settings/snippets:/indirector/snippets
     environment:
       - PYTHONUNBUFFERED=1
+    mem_limit: 1024m
+    cpu_shares: 1536  # second priority after companion
+    logging:
+      driver: journald
+      options:
+        tag: "python"
 
   code-server:
     image: linuxserver/code-server
@@ -93,11 +129,18 @@ services:
       - "traefik.http.routers.codeserver.middlewares=simple-auth"
       - "traefik.http.services.codeserver.loadbalancer.server.port=8443"
       - "traefik.http.middlewares.simple-auth.basicauth.users=${ADMIN_USER}:${ADMIN_PASS}"
+    mem_limit: 512m
+    cpu_shares: 256
+    logging:
+      driver: journald
+      options:
+        tag: "code-server"
 
   homer:
     image: b4bz/homer:latest
     container_name: dashboard
     restart: unless-stopped
+    init: true
     volumes:
       - ./datastore/dashboard:/www/assets
     labels:
@@ -106,6 +149,12 @@ services:
       - "traefik.http.routers.homer.entrypoints=web"
       - "traefik.http.routers.homer.priority=1"
       - "traefik.http.services.homer.loadbalancer.server.port=8080"
+    mem_limit: 64m
+    cpu_shares: 128
+    logging:
+      driver: journald
+      options:
+        tag: "homer"
 
   grist:
     image: gristlabs/grist
@@ -114,15 +163,23 @@ services:
       - sheets
     container_name: grist
     restart: unless-stopped
+    init: true
     ports:
       - "8484:8484"
     volumes:
       - ./datastore/grist:/persist
+    mem_limit: 1024m
+    cpu_shares: 256
+    logging:
+      driver: journald
+      options:
+        tag: "grist"
 
   dozzle:
     image: amir20/dozzle:latest
     container_name: log-viewer
     restart: unless-stopped
+    init: true
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
@@ -135,6 +192,12 @@ services:
       - "traefik.http.services.dozzle.loadbalancer.server.port=8080"
       - "traefik.http.routers.dozzle.middlewares=simple-auth"
       - "traefik.http.middlewares.simple-auth.basicauth.users=${ADMIN_USER}:${ADMIN_PASS}"
+    mem_limit: 256m
+    cpu_shares: 128
+    logging:
+      driver: journald
+      options:
+        tag: "dozzle"
 
   contentshare:
     image: tanq16/local-content-share:main
@@ -143,10 +206,17 @@ services:
       - share
     container_name: local-content-share
     restart: unless-stopped
+    init: true
     ports:
       - "8090:8080"
     volumes:
       - ./datastore/contentshare:/app/data
+    mem_limit: 256m
+    cpu_shares: 128
+    logging:
+      driver: journald
+      options:
+        tag: "contentshare"
 
   public_http:
     image: nginx:alpine
@@ -155,6 +225,7 @@ services:
       - public
     container_name: public
     restart: unless-stopped
+    init: true
     volumes:
       - ./src/public:/usr/share/nginx/html:ro
       - ./datastore/public/nginx.conf:/etc/nginx/conf.d/default.conf:ro
@@ -163,20 +234,9 @@ services:
       - "traefik.http.routers.public.rule=PathPrefix(`/public`)"
       - "traefik.http.routers.public.entrypoints=web"
       - "traefik.http.services.public.loadbalancer.server.port=80"
-
-  tailscale:
-    image: tailscale/tailscale:latest
-    profiles:
-      - all
-      - vpn
-    container_name: vpn
-    restart: unless-stopped
-    network_mode: host
-    privileged: true
-    volumes:
-      - ./datastore/tailscale:/var/lib/tailscale
-      - /dev/net/tun:/dev/net/tun
-    environment:
-      - TS_AUTHKEY=
-      - TS_STATE_DIR=/var/lib/tailscale
-      - TS_EXTRA_ARGS=--ssh
+    mem_limit: 256m
+    cpu_shares: 256
+    logging:
+      driver: journald
+      options:
+        tag: "public_http"

@@ -13,6 +13,7 @@ IFS=$'\n\t'
 START_TS=$(date +%s)
 
 # ---- Traps -------------------------------------------------------------------
+
 on_error() {
   local exit_code=$?
   local line_no=${BASH_LINENO[0]:-?}
@@ -30,6 +31,7 @@ trap on_error ERR
 trap on_exit EXIT
 
 # ---- UI helpers --------------------------------------------------------------
+
 readonly COLOR1="\e[32m"
 readonly COLOR_INPUT="\e[36m"
 readonly ENDCOLOR="\e[0m"
@@ -39,7 +41,19 @@ prompt()   { echo -ne "${COLOR_INPUT}$1${ENDCOLOR}"; }
 die()      { echo -e "\e[31m$*\e[0m" >&2; exit 1; }
 have()     { command -v "$1" >/dev/null 2>&1; }
 
+# Small helper to append a line to a file if it's not already present
+append_if_missing() {
+  local line="$1"
+  local file="$2"
+
+  sudo touch "$file"
+  if ! grep -Fxq "$line" "$file" 2>/dev/null; then
+    echo "$line" | sudo tee -a "$file" >/dev/null
+  fi
+}
+
 # ---- Flags -------------------------------------------------------------------
+
 PROFILES=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -49,6 +63,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ---- Helpers -----------------------------------------------------------------
+
 set_env_var() {
   local key="$1" val="$2" file="${3:-.env}"
   touch "$file"
@@ -86,6 +101,78 @@ select_profiles_if_needed() {
   fi
 }
 
+# ---- Appliance hardening -----------------------------------------------------
+
+harden_journald() {
+  msg "Configuring journald for RAM-only, low-write logging..."
+  sudo mkdir -p /etc/systemd/journald.conf.d
+  if [[ ! -f /etc/systemd/journald.conf.d/10-appliance.conf ]]; then
+    sudo tee /etc/systemd/journald.conf.d/10-appliance.conf >/dev/null <<'EOF'
+[Journal]
+# Keep logs in RAM only; avoid disk writes.
+Storage=volatile
+RuntimeMaxUse=32M
+EOF
+    sudo systemctl restart systemd-journald
+  else
+    msg "journald appliance config already present; skipping."
+  fi
+}
+
+configure_tmpfs_mounts() {
+  msg "Ensuring tmpfs mounts for /tmp and /var/tmp..."
+  append_if_missing "tmpfs /tmp tmpfs defaults,noatime,mode=1777 0 0" /etc/fstab
+  append_if_missing "tmpfs /var/tmp tmpfs defaults,noatime 0 0" /etc/fstab
+}
+
+configure_ext4_root_mount() {
+  msg "Ensuring safer EXT4 mount options for / (noatime, errors=remount-ro)..."
+
+  # Only touch /etc/fstab if / is ext4
+  if grep -qE '^[^#].+\s+/\s+ext4' /etc/fstab; then
+    sudo cp /etc/fstab /etc/fstab.bak_appliance || true
+
+    # Rewrite the ext4 root line while preserving UUID and mountpoint
+    sudo sed -i -E \
+      's@^([^#].*\s/\s+)ext4\s+([^ ]*)@\1ext4 noatime,errors=remount-ro@' \
+      /etc/fstab
+
+    msg "Updated root mount options in /etc/fstab."
+  else
+    msg "Root filesystem is not ext4; skipping mount tuning."
+  fi
+}
+
+configure_nm_ignore_docker() {
+  msg "Configuring NetworkManager to ignore Docker interfaces..."
+
+  sudo mkdir -p /etc/NetworkManager/conf.d
+
+  sudo tee /etc/NetworkManager/conf.d/10-unmanaged-docker.conf >/dev/null <<'EOF'
+[keyfile]
+unmanaged-devices=interface-name:docker0;interface-name:br-*;interface-name:veth*
+EOF
+
+  sudo systemctl restart NetworkManager || true
+}
+
+configure_power_button() {
+  msg "Configuring systemd-logind to ignore power button..."
+  sudo mkdir -p /etc/systemd/logind.conf.d
+  sudo tee /etc/systemd/logind.conf.d/10-ignore-power.conf >/dev/null <<'EOF'
+[Login]
+# Ignore physical power button presses (appliance behaviour).
+HandlePowerKey=ignore
+EOF
+  sudo systemctl restart systemd-logind
+}
+
+disable_sleep_targets() {
+  msg "Masking sleep/hibernate targets..."
+  sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target || true
+}
+
+
 # ---- Steps -------------------------------------------------------------------
 
 deploy() {
@@ -104,42 +191,175 @@ deploy() {
   sudo docker compose up -d --build
 }
 
-check_tailscale() {
-  local container="vpn"
-  local state_dir="./datastore/tailscale"
-  mkdir -p "$state_dir"
-  sudo chown -R "1000:1000" "$state_dir"
-  chmod 700 "$state_dir"
+configure_tailscale() {
+  msg "Configuring Tailscale"
 
-  # Wait briefly to ensure container is up
-  sleep 2
-
-  # Is container running?
-  if ! sudo docker ps --format '{{.Names}}' | grep -q "^${container}$"; then
-    echo -e "\e[33mTailscale container not running; skipping setup.\e[0m"
-    return
+  # 1) Ensure tailscale is installed
+  if ! have tailscale; then
+    msg "Installing tailscale via pacman..."
+    sudo pacman --noconfirm --needed tailscale
   fi
 
-  # Check if already logged in
-  if sudo docker exec "$container" tailscale status 2>&1 | grep -q "Logged in as"; then
-    return
+  # 2) Enable and start the daemon
+  sudo systemctl enable --now tailscaled.service
+
+  # 3) Check current status and optionally reconfigure
+  local already_logged_in=0
+  if sudo tailscale status 2>&1 | grep -q "Logged in as"; then
+    already_logged_in=1
+    msg "Tailscale is already logged in."
+    prompt "Reconfigure Tailscale on this host anyway? [y/N]: "
+    local reconfig
+    read -r reconfig
+    if [[ ! "$reconfig" =~ ^[Yy]$ ]]; then
+      msg "Keeping existing Tailscale configuration."
+      return
+    fi
   fi
 
-  echo -e "\e[34mInitializing Tailscale...\e[0m"
-  # Run tailscale up and capture output
-  local output
-  output=$(sudo docker exec "$container" tailscale up 2>&1 || true)
+  msg ""
+  msg "This host can be:"
+  msg "  - just a normal Tailscale node"
+  msg "  - a subnet router (LAN gateway)"
+  msg "  - an exit node (full VPN gateway)"
+  msg ""
 
-  if echo "$output" | grep -q "https://login.tailscale.com"; then
+  # 4) Optional: Headscale login server
+  local login_server=""
+  prompt "Use a custom Headscale login server? [y/N]: "
+  local use_headscale
+  read -r use_headscale
+  if [[ "$use_headscale" =~ ^[Yy]$ ]]; then
+    prompt "Headscale URL (e.g. https://headscale.example.com): "
+    read -r login_server
+    login_server=${login_server%%/}   # strip trailing slash
+  fi
+
+  # 5) Subnet routing: auto-detect LAN subnet and use as default
+  local routes=""
+  local detected_cidr=""
+  detected_cidr=$(ip -4 addr show scope global | awk '/inet / {print $2}' | grep -v '^100\.' | head -n1 || true)
+
+  prompt "Advertise this machine as a subnet router for local LAN(s)? [y/N]: "
+  local use_subnet
+  read -r use_subnet
+  if [[ "$use_subnet" =~ ^[Yy]$ ]]; then
+    msg "Enter comma-separated CIDR ranges reachable from this box."
+    if [[ -n "$detected_cidr" ]]; then
+      msg "Detected local IPv4 network: $detected_cidr"
+      prompt "Subnets to advertise [default: $detected_cidr]: "
+      read -r routes
+      routes=${routes:-$detected_cidr}
+    else
+      msg "Example: 192.168.10.0/24,10.10.0.0/16"
+      prompt "Subnets to advertise: "
+      read -r routes
+    fi
+
+    if [[ -n "$routes" ]]; then
+      msg "Enabling IP forwarding for subnet routing..."
+      sudo tee /etc/sysctl.d/99-tailscale-ip-forward.conf >/dev/null <<EOF
+net.ipv4.ip_forward = 1
+net.ipv6.conf.all.forwarding = 1
+EOF
+      sudo sysctl --system >/dev/null
+    fi
+  fi
+
+  # 6) Exit node
+  local advertise_exit_flag=""
+  prompt "Advertise this machine as an exit node (full VPN)? [y/N]: "
+  local use_exit
+  read -r use_exit
+  if [[ "$use_exit" =~ ^[Yy]$ ]]; then
+    advertise_exit_flag="--advertise-exit-node"
+    msg "Note: clients still need to explicitly select this exit node."
+  fi
+
+  # 7) Build tailscale up arguments
+  local args=(--ssh)
+
+  # Authkey: use env if present, otherwise prompt
+  local authkey="${TS_AUTHKEY:-}"
+  if [[ -z "$authkey" ]]; then
+    prompt "Enter Tailscale auth key (leave blank for URL/browser login): "
+    read -r authkey
+    msg ""
+  fi
+  if [[ -n "$authkey" ]]; then
+    args+=(--authkey="$authkey")
+  fi
+
+  if [[ -n "$login_server" ]]; then
+    args+=(--login-server="$login_server")
+  fi
+
+  if [[ -n "$routes" ]]; then
+    args+=(--advertise-routes="$routes")
+  fi
+
+  if [[ -n "$advertise_exit_flag" ]]; then
+    args+=("$advertise_exit_flag")
+  fi
+
+  msg ""
+
+  # For logging, show args but redact auth key
+  local pretty_args=()
+  local a
+  for a in "${args[@]}"; do
+    if [[ "$a" == --authkey=* ]]; then
+      pretty_args+=(--authkey=***redacted***)
+    else
+      pretty_args+=("$a")
+    fi
+  done
+
+  msg "Running: sudo tailscale up ${pretty_args[*]}"
+  msg ""
+
+  # 8) Run tailscale up:
+  # - If we have an authkey, it should be non-interactive; capture output.
+  # - If we don't, let it print its URL / prompts directly and just check status.
+  if [[ -n "$authkey" ]]; then
+    local output
+    output=$(sudo tailscale up "${args[@]}" 2>&1 || true)
+
+    if echo "$output" | grep -q "Logged in as"; then
+      msg "Tailscale authenticated successfully."
+      return
+    fi
+
     local url
-    url=$(echo "$output" | grep -Eo 'https://login\.tailscale\.com[^ ]+')
-    echo -e "\e[33mAuthorize Tailscale for this device:\e[0m\n$url"
+    url=$(echo "$output" | grep -Eo 'https://[^ ]+' | head -n1 || true)
+
+    if [[ -n "$url" ]]; then
+      msg "Authorize this node by opening:"
+      msg "  $url"
+    else
+      msg "tailscale up output:"
+      echo "$output"
+      msg "If this failed, you can re-run:"
+      msg "  sudo tailscale up ${pretty_args[*]}"
+    fi
   else
-    echo -e "\e[31mUnexpected output from tailscale up:\e[0m\n$output"
+    # Interactive case: user sees URL and prompts directly
+    msg "No auth key provided; 'tailscale up' may show a login URL and wait until you authenticate."
+    msg "After completing authentication in your browser, this script will continue."
+    sudo tailscale up "${args[@]}" || true
+
+    if sudo tailscale status 2>&1 | grep -q "Logged in as"; then
+      msg "Tailscale authenticated successfully."
+    else
+      msg "Tailscale does not appear to be logged in."
+      msg "You can re-run manually with:"
+      msg "  sudo tailscale up ${pretty_args[*]}"
+    fi
   fi
 }
 
 # ---- Main --------------------------------------------------------------------
+
 msg "Run as a regular user (sudo will be used as needed)."
 
 if [[ -t 0 ]]; then
@@ -157,8 +377,17 @@ fi
 
 git config --global core.autocrlf input
 
+# Appliance tweaks
+harden_journald
+configure_tmpfs_mounts
+configure_ext4_root_mount
+configure_nm_ignore_docker
+configure_power_button
+disable_sleep_targets
+
+# Deployment scripts
 deploy
-check_tailscale
+configure_tailscale
 
 msg "Setup complete 👍"
 ip=$(ip -4 -o addr show scope global 2>/dev/null | awk 'NR==1 { sub(/\/.*/, "", $4); print $4 }')
