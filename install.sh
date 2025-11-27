@@ -89,7 +89,7 @@ select_profiles_if_needed() {
 # ---- Steps -------------------------------------------------------------------
 
 deploy() {
-  local config_dir="./datastore/companion"
+  local config_dir="./datastore"
   mkdir -p "$config_dir"
 
   sudo chown -R "1000:1000" "$config_dir"
