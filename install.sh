@@ -188,6 +188,8 @@ deploy() {
   sudo docker compose down --remove-orphans || true
   sudo docker compose pull
   sudo docker compose up -d --build
+
+  sudo chown -R "1000:1000" "$config_dir"
 }
 
 configure_tailscale() {
