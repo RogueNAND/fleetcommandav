@@ -347,14 +347,25 @@ EOF
     msg "After completing authentication in your browser, this script will continue."
     sudo tailscale up "${args[@]}" || true
 
-    if sudo tailscale status 2>&1 | grep -q "Logged in as"; then
+    # Give tailscale a few seconds to finish connecting / registering
+    local ok=0
+    for i in {1..10}; do
+      if sudo tailscale status 2>&1 | grep -q "Logged in as"; then
+        ok=1
+        break
+      fi
+      sleep 2
+    done
+
+    if [[ $ok -eq 1 ]]; then
       msg "Tailscale authenticated successfully."
     else
-      msg "Tailscale does not appear to be logged in."
+      msg "Tailscale does not appear to be logged in (or status not yet updated)."
       msg "You can re-run manually with:"
       msg "  sudo tailscale up ${pretty_args[*]}"
     fi
   fi
+
 }
 
 # ---- Main --------------------------------------------------------------------
