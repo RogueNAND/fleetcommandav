@@ -1,18 +1,9 @@
-#!/bin/bash
-
-# Ensure bash
-if [ -z "$BASH_VERSION" ]; then
-  echo "Error: run with bash, not sh." >&2
-  exit 1
-fi
-
-# Robust mode: exit on error, unset vars, pipeline failures; better word-splitting rules
-set -Eeuo pipefail
-IFS=$'\n\t'
+#!/usr/bin/env bash
+set -euo pipefail
 
 START_TS=$(date +%s)
 
-# ---- Traps -------------------------------------------------------------------
+# Traps ------------------------------------------------------------------------
 
 on_error() {
   local exit_code=$?
@@ -30,104 +21,140 @@ on_exit() {
 trap on_error ERR
 trap on_exit EXIT
 
-# ---- UI helpers --------------------------------------------------------------
+# UI helpers -------------------------------------------------------------------
 
-readonly COLOR1="\e[32m"
-readonly COLOR_INPUT="\e[36m"
-readonly ENDCOLOR="\e[0m"
-
-msg()      { echo -e "${COLOR1}$1${ENDCOLOR}"; }
-prompt()   { echo -ne "${COLOR_INPUT}$1${ENDCOLOR}"; }
+msg()      { echo -e "\e[32m$1\e[0m"; }
 die()      { echo -e "\e[31m$*\e[0m" >&2; exit 1; }
-have()     { command -v "$1" >/dev/null 2>&1; }
 
-# ---- Flags -------------------------------------------------------------------
+# Configuration ----------------------------------------------------------------
 
+TARGET_DIR="/srv/fleetcommandav"
+REPO_URL="https://github.com/RogueNAND/fleetcommandav.git"
 PROFILES=""
+
+# Parse flags ------------------------------------------------------------------
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -p|--profiles) PROFILES="${2:-}"; shift 2;;
-    *) shift;;
+    *) die "Unknown flag: $1";;
   esac
 done
 
-# ---- Helpers -----------------------------------------------------------------
+# Functions --------------------------------------------------------------------
 
-set_env_var() {
-  local key="$1" val="$2" file="${3:-.env}"
-  touch "$file"
-  if grep -qE "^[[:space:]]*${key}=" "$file"; then
-    sed -i "s|^[[:space:]]*${key}=.*|${key}=${val}|" "$file"
-  else
-    echo "${key}=${val}" >> "$file"
-  fi
+check_shell_and_user() {
+  [[ -n "${BASH_VERSION:-}" ]] || die "Error: run with bash, not sh."
+  [[ "$EUID" -ne 0 ]] || die "Do not run this script as root. Run it as a regular user with sudo privileges."
+
+  msg "Checking sudo access..."
+  sudo -v || die "This script requires sudo privileges."
 }
 
-select_profiles_if_needed() {
-  # Only prompt if none provided and we’re interactive
+ensure_repo() {
+  if [[ ! -d "$TARGET_DIR/.git" ]]; then
+    # Backup existing non-git directory
+    if [[ -d "$TARGET_DIR" ]] && [[ "$(ls -A "$TARGET_DIR" 2>/dev/null)" ]]; then
+      local backup_dir="${TARGET_DIR}-backup-$(date +%Y%m%d-%H%M%S)"
+      msg "Backing up existing directory to ${backup_dir}..."
+      sudo mv "$TARGET_DIR" "$backup_dir"
+    fi
+
+    msg "Cloning repository to ${TARGET_DIR}..."
+    sudo mkdir -p "$(dirname "$TARGET_DIR")"
+    sudo git clone "$REPO_URL" "$TARGET_DIR"
+    sudo chown -R "$USER:$USER" "$TARGET_DIR"
+  else
+    msg "Repository already exists at ${TARGET_DIR}"
+    cd "$TARGET_DIR"
+    git pull --ff-only 2>/dev/null || msg "Note: git pull failed or not on tracking branch (continuing anyway)"
+  fi
+
+  cd "$TARGET_DIR"
+  git config --local core.autocrlf input
+}
+
+select_profiles() {
+  # Check if profiles already set in .env
+  local existing_profiles=""
+  if [[ -f .env ]] && grep -q "^COMPOSE_PROFILES=" .env; then
+    existing_profiles=$(grep "^COMPOSE_PROFILES=" .env | cut -d'=' -f2-)
+  fi
+
+  # Only prompt if none provided via flag and we're interactive
   if [[ -z "$PROFILES" && -t 0 ]]; then
-    # Try to list available profiles (Compose v2+ supports this)
-    local available=""
-    if have docker; then
-      available=$(docker compose config --profiles 2>/dev/null || true)
+    # Dynamically extract available profiles from docker-compose.yml
+    local available_profiles
+    available_profiles=$(grep -A1 'profiles:' docker-compose.yml 2>/dev/null | grep -E '^\s+-' | sed 's/^[[:space:]]*-[[:space:]]*//' | sort -u | tr '\n' ',' | sed 's/,$//')
+
+    if [[ -n "$available_profiles" ]]; then
+      msg "Available profiles: ${available_profiles}"
     fi
-    if [[ -n "$available" ]]; then
-      msg "Available profiles:"
-      # print as a single line: profile1, profile2, ...
-      echo "  $(echo "$available" | tr '\n' ',' | sed 's/,$//')"
-    fi
-    prompt "Profiles to enable (comma-separated): "
-    read -r PROFILES || true
+
+    # Inline prompt
+    printf "\e[36mProfiles to enable (comma-separated) [${existing_profiles}]: \e[0m" > /dev/tty
+    read -r PROFILES < /dev/tty || PROFILES=""
+    [[ -z "$PROFILES" && -n "$existing_profiles" ]] && PROFILES="$existing_profiles"
+  elif [[ -z "$PROFILES" && -n "$existing_profiles" ]]; then
+    PROFILES="$existing_profiles"
   fi
 
   # Normalize spaces
   PROFILES="${PROFILES//[[:space:]]/}"
+
   if [[ -n "$PROFILES" ]]; then
-    set_env_var "COMPOSE_PROFILES" "$PROFILES" ".env"
-    msg "Persisted profiles in .env: COMPOSE_PROFILES=${PROFILES}"
+    # Update .env
+    touch .env
+    if grep -qE "^[[:space:]]*COMPOSE_PROFILES=" .env; then
+      sed -i "s|^[[:space:]]*COMPOSE_PROFILES=.*|COMPOSE_PROFILES=${PROFILES}|" .env
+    else
+      echo "COMPOSE_PROFILES=${PROFILES}" >> .env
+    fi
+    msg "Set profiles: COMPOSE_PROFILES=${PROFILES}"
   else
-    msg "You can change profiles later via COMPOSE_PROFILES in .env or by running this script again."
+    msg "No profiles selected. Core services only."
   fi
 }
 
-# ---- Steps -------------------------------------------------------------------
+ensure_datastore() {
+  mkdir -p "./datastore"
+  sudo chown -R "1000:1000" "./datastore"
+  chmod -R 755 "./datastore"
+}
 
-deploy() {
-  local config_dir="./datastore"
-  mkdir -p "$config_dir"
+deploy_services() {
+  msg "Deploying services..."
 
-  sudo chown -R "1000:1000" "$config_dir"
-  chmod -R 755 "$config_dir"
-
-  select_profiles_if_needed
-
-  msg "Starting services..."
-
-  sudo docker compose down --remove-orphans || true
+  sudo docker compose down --remove-orphans 2>/dev/null || true
   sudo docker compose pull
   sudo docker compose up -d --build
 
-  sudo chown -R "1000:1000" "$config_dir"
+  msg "Services deployed successfully."
 }
 
-# ---- Main --------------------------------------------------------------------
+show_access_info() {
+  local ip
+  ip=$(ip -4 -o addr show scope global 2>/dev/null | awk 'NR==1 { sub(/\/.*/, "", $4); print $4 }')
 
-# Enforce non-root
-if [[ $EUID -eq 0 ]]; then
-  die "Do not run this script as root. Run it as a regular user with sudo privileges."
-fi
+  echo
+  msg "========================================="
+  msg "FleetCommandAV is now running!"
+  msg "========================================="
+  echo
+  msg "Access the dashboard at:"
+  msg "  http://${ip:-localhost}/"
+  echo
+  msg "To update: cd ${TARGET_DIR} && git pull && ./install.sh"
+  echo
+}
 
-# Prime sudo password early
-msg "Checking sudo access..."
-if ! sudo -v; then
-  die "This script requires sudo privileges."
-fi
+main() {
+  check_shell_and_user
+  ensure_repo
+  select_profiles
+  ensure_datastore
+  deploy_services
+  show_access_info
+}
 
-git config --global core.autocrlf input
-
-# Deployment scripts
-deploy
-
-msg "Setup complete 👍"
-ip=$(ip -4 -o addr show scope global 2>/dev/null | awk 'NR==1 { sub(/\/.*/, "", $4); print $4 }')
-msg "FleetCommandAV is available on http://${ip:-localhost}/"
+main "$@"
