@@ -129,6 +129,8 @@ deploy_services() {
   sudo docker compose pull
   sudo docker compose up -d --build
 
+  sudo chown -R "1000:1000" "./datastore"
+
   msg "Services deployed successfully."
 }
 

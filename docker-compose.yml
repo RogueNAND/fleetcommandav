@@ -33,6 +33,7 @@ services:
     restart: unless-stopped
     network_mode: host
     init: true
+    user: "1000:1000"
     volumes:
       - ./datastore/companion:/companion
     healthcheck:
