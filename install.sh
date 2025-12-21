@@ -85,7 +85,7 @@ select_profiles() {
   if [[ -z "$PROFILES" && -t 0 ]]; then
     # Dynamically extract available profiles from docker-compose.yml
     local available_profiles
-    available_profiles=$(grep -A1 'profiles:' docker-compose.yml 2>/dev/null | grep -E '^\s+-' | sed 's/^[[:space:]]*-[[:space:]]*//' | sort -u | tr '\n' ',' | sed 's/,$//')
+    available_profiles=$(awk '/profiles:/{p=1;next} p && /^[[:space:]]+-/{sub(/^[[:space:]]*-[[:space:]]*/,""); print; next} p{p=0}' docker-compose.yml 2>/dev/null | sort -u | tr '\n' ',' | sed 's/,$//')
 
     if [[ -n "$available_profiles" ]]; then
       msg "Available profiles: ${available_profiles}"
