@@ -28,9 +28,19 @@ die()      { echo -e "\e[31m$*\e[0m" >&2; exit 1; }
 
 # Configuration ----------------------------------------------------------------
 
-TARGET_DIR="/srv/fleetcommandav"
 REPO_URL="https://github.com/RogueNAND/fleetcommandav.git"
 PROFILES=""
+TARGET_DIR=""
+
+# Detect if running locally (in a git repo) or remotely (via curl)
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  # Running locally - use current directory
+  TARGET_DIR="$(git rev-parse --show-toplevel)"
+  msg "Detected local installation at ${TARGET_DIR}"
+else
+  # Remote install - use /srv
+  TARGET_DIR="/srv/fleetcommandav"
+fi
 
 # Parse flags ------------------------------------------------------------------
 
@@ -47,27 +57,15 @@ check_shell_and_user() {
   [[ -n "${BASH_VERSION:-}" ]] || die "Error: run with bash, not sh."
   [[ "$EUID" -ne 0 ]] || die "Do not run this script as root. Run it as a regular user with sudo privileges."
 
-  msg "Checking sudo access..."
   sudo -v || die "This script requires sudo privileges."
 }
 
 ensure_repo() {
   if [[ ! -d "$TARGET_DIR/.git" ]]; then
-    # Backup existing non-git directory
-    if [[ -d "$TARGET_DIR" ]] && [[ "$(ls -A "$TARGET_DIR" 2>/dev/null)" ]]; then
-      local backup_dir="${TARGET_DIR}-backup-$(date +%Y%m%d-%H%M%S)"
-      msg "Backing up existing directory to ${backup_dir}..."
-      sudo mv "$TARGET_DIR" "$backup_dir"
-    fi
-
     msg "Cloning repository to ${TARGET_DIR}..."
     sudo mkdir -p "$(dirname "$TARGET_DIR")"
     sudo git clone "$REPO_URL" "$TARGET_DIR"
     sudo chown -R "$USER:$USER" "$TARGET_DIR"
-  else
-    msg "Repository already exists at ${TARGET_DIR}"
-    cd "$TARGET_DIR"
-    git pull --ff-only 2>/dev/null || msg "Note: git pull failed or not on tracking branch (continuing anyway)"
   fi
 
   cd "$TARGET_DIR"
@@ -85,7 +83,7 @@ select_profiles() {
   if [[ -z "$PROFILES" && -t 0 ]]; then
     # Dynamically extract available profiles from docker-compose.yml
     local available_profiles
-    available_profiles=$(awk '/profiles:/{p=1;next} p && /^[[:space:]]+-/{sub(/^[[:space:]]*-[[:space:]]*/,""); print; next} p{p=0}' docker-compose.yml 2>/dev/null | sort -u | tr '\n' ',' | sed 's/,$//')
+    available_profiles=$(grep -A5 'profiles:' docker-compose.yml 2>/dev/null | awk '/^[[:space:]]+-/ {gsub(/^[[:space:]]*-[[:space:]]*|[[:space:]]*$|[\r]/, ""); if ($0 ~ /^[a-z]+$/) print}' | sort -u | paste -sd,)
 
     if [[ -n "$available_profiles" ]]; then
       msg "Available profiles: ${available_profiles}"
@@ -110,7 +108,7 @@ select_profiles() {
     else
       echo "COMPOSE_PROFILES=${PROFILES}" >> .env
     fi
-    msg "Set profiles: COMPOSE_PROFILES=${PROFILES}"
+    msg "Updated .env: COMPOSE_PROFILES=${PROFILES}"
   else
     msg "No profiles selected. Core services only."
   fi
@@ -119,7 +117,8 @@ select_profiles() {
 ensure_datastore() {
   mkdir -p "./datastore"
   sudo chown -R "1000:1000" "./datastore"
-  chmod -R 755 "./datastore"
+  find "./datastore" -type d -exec chmod 755 {} +
+  find "./datastore" -type f -exec chmod 644 {} +
 }
 
 deploy_services() {
