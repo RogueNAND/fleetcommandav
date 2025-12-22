@@ -1,4 +1,4 @@
-from . import companion
+from fleetcommand import companion
 
 """
 🚀 Companion Automation API Examples

@@ -35,7 +35,7 @@ services:
     init: true
     user: "1000:1000"
     volumes:
-      - ./datastore/companion:/companion
+      - ./compose/companion:/companion
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/ || exit 1"]
       interval: 10s
@@ -62,7 +62,7 @@ services:
       - "8888:8888/udp"
       - "9999:9999/udp"
     volumes:
-      - "./datastore/ontime:/data/"
+      - "./compose/ontime:/data/"
     environment:
       - TZ=US/Eastern
     mem_limit: 256m
@@ -82,7 +82,7 @@ services:
     ports:
       - "8123:8123"
     volumes:
-      - ./datastore/homeassistant:/config
+      - ./compose/homeassistant:/config
       - /etc/localtime:/etc/localtime:ro
       - /run/dbus:/run/dbus:ro
     privileged: true
@@ -94,16 +94,19 @@ services:
         tag: "homeassistant"
 
   python:
-    build: ./src
+    build: ./framework
     container_name: python
     restart: unless-stopped
     network_mode: host
     init: true
     volumes:
-      - ./src:/indirector
-      - ./datastore/editor/settings/snippets:/indirector/snippets
+      - ./framework:/fleetcommand
+      - ./modules:/modules
+      - ./compose/editor/settings/snippets:/snippets
+      - ./compose/public/files:/public
     environment:
       - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/fleetcommand:/modules
     mem_limit: 1024m
     cpu_shares: 1536  # second priority after companion
     logging:
@@ -120,8 +123,8 @@ services:
       - PGID=1000
     volumes:
       - .:/config/workspace:rw
-      - ./datastore/editor/settings:/config/data/User/
-      - ./datastore/editor/settings/snippets:/config/data/User/snippets
+      - ./compose/editor/settings:/config/data/User/
+      - ./compose/editor/settings/snippets:/config/data/User/snippets
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.codeserver.rule=PathPrefix(`/`)"
@@ -143,7 +146,7 @@ services:
     restart: unless-stopped
     init: true
     volumes:
-      - ./datastore/dashboard:/www/assets
+      - ./compose/dashboard:/www/assets
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.homer.rule=PathPrefix(`/`)"
@@ -168,7 +171,7 @@ services:
     ports:
       - "8484:8484"
     volumes:
-      - ./datastore/grist:/persist
+      - ./compose/grist:/persist
     mem_limit: 1024m
     cpu_shares: 256
     logging:
@@ -211,7 +214,7 @@ services:
     ports:
       - "8090:8080"
     volumes:
-      - ./datastore/contentshare:/app/data
+      - ./compose/contentshare:/app/data
     mem_limit: 256m
     cpu_shares: 128
     logging:
@@ -228,8 +231,8 @@ services:
     restart: unless-stopped
     init: true
     volumes:
-      - ./src/public:/usr/share/nginx/html:ro
-      - ./datastore/public/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./compose/public/files:/usr/share/nginx/html:ro
+      - ./compose/public/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.public.rule=PathPrefix(`/public`)"

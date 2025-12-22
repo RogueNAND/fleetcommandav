@@ -114,11 +114,15 @@ select_profiles() {
   fi
 }
 
-ensure_datastore() {
-  mkdir -p "./datastore"
-  sudo chown -R "1000:1000" "./datastore"
-  find "./datastore" -type d -exec chmod 755 {} +
-  find "./datastore" -type f -exec chmod 644 {} +
+ensure_compose() {
+  mkdir -p "./compose"
+  sudo chown -R "1000:1000" "./compose"
+  sudo find "./compose" -type d -exec chmod 755 {} +
+  sudo find "./compose" -type f -exec chmod 644 {} +
+
+  mkdir -p "./modules/base" "./modules/community" "./modules/user"
+  sudo find "./modules" -type d -exec chmod 755 {} +
+  sudo find "./modules" -type f -exec chmod 644 {} +
 }
 
 deploy_services() {
@@ -128,7 +132,7 @@ deploy_services() {
   sudo docker compose pull
   sudo docker compose up -d --build
 
-  sudo chown -R "1000:1000" "./datastore"
+  sudo chown -R "1000:1000" "./compose"
 
   msg "Services deployed successfully."
 }
@@ -153,7 +157,7 @@ main() {
   check_shell_and_user
   ensure_repo
   select_profiles
-  ensure_datastore
+  ensure_compose
   deploy_services
   show_access_info
 }
