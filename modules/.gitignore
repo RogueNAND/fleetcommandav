@@ -1,0 +1,8 @@
+# Ignore everything in modules/ by default
+*
+
+# Allow base/ directory and its contents (built-in modules)
+!.gitignore
+!README.md
+!base/
+!base/**

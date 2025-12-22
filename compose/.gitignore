@@ -1,0 +1,10 @@
+# Ignore everything in modules/ by default
+*
+
+# Allow specific configuration files
+!.gitignore
+!dashboard/
+!dashboard/**
+!editor/settings/keybindings.json
+!editor/settings/settings.json
+!compose/public/nginx.conf
