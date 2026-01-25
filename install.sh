@@ -65,10 +65,12 @@ ensure_repo() {
     msg "Cloning repository to ${TARGET_DIR}..."
     sudo mkdir -p "$(dirname "$TARGET_DIR")"
     sudo git clone "$REPO_URL" "$TARGET_DIR"
-    sudo chown -R "$USER:$USER" "$TARGET_DIR"
+    sudo chown -R "$(id -u):$(id -g)" "$TARGET_DIR"
   fi
 
   cd "$TARGET_DIR"
+  # Ensure git trusts this directory (needed when cloned via sudo)
+  git config --global --add safe.directory "$TARGET_DIR" 2>/dev/null || true
   git config --local core.autocrlf input
 }
 

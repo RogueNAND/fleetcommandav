@@ -28,7 +28,7 @@ services:
         tag: "traefik"
 
   companion:
-    image: "ghcr.io/roguenand/companion:latest"
+    image: "ghcr.io/roguenand/companion:v4.2.2"
     container_name: companion
     restart: unless-stopped
     network_mode: host
