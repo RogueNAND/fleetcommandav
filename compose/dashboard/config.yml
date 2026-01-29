@@ -83,7 +83,7 @@ services:
       - name: "Linux Dashboard"
         icon: "fa-solid fa-terminal"
         subtitle: "Cockpit"
-        url: "javascript:void(window.open(`//${location.hostname}:9090/`))"
+        url: "javascript:void(window.open(`//${location.hostname}:9099/`))"
       - name: "Log Viewer"
         icon: "fa-solid fa-magnifying-glass"
         subtitle: "Dozzle"
