@@ -33,6 +33,24 @@ def load_automations():
                 import traceback
                 traceback.print_exc()
 
+        # Load package directories (directories with __init__.py)
+        for dir_path in source_dir.iterdir():
+            if not dir_path.is_dir():
+                continue
+            if dir_path.name.startswith("_"):
+                continue
+            if not (dir_path / "__init__.py").exists():
+                continue
+
+            module_name = dir_path.name
+            try:
+                __import__(module_name)
+                print(f"✅ Loaded: {module_name}/ (from {source_dir.name})")
+            except Exception as e:
+                print(f"❌ Failed to load {module_name}/: {e}")
+                import traceback
+                traceback.print_exc()
+
 async def main():
     load_automations()
     await companion.run()
