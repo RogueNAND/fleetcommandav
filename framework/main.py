@@ -1,7 +1,53 @@
 import asyncio
+import subprocess
 import sys
 from pathlib import Path
 from fleetcommand import companion
+
+
+def install_libraries():
+    """Install libraries from /fleetcommand/libraries/ using pip editable installs"""
+    libraries_dir = Path("/fleetcommand/libraries")
+
+    if not libraries_dir.exists():
+        return
+
+    # Get site-packages directory for checking .egg-link files
+    import site
+    site_packages = Path(site.getsitepackages()[0])
+
+    for pkg_dir in libraries_dir.iterdir():
+        if not pkg_dir.is_dir():
+            continue
+        if pkg_dir.name.startswith(("_", ".")):
+            continue
+
+        # Check if it's an installable package
+        is_installable = any(
+            (pkg_dir / f).exists()
+            for f in ("pyproject.toml", "setup.py", "setup.cfg")
+        )
+        if not is_installable:
+            continue
+
+        # Check if already editable-installed to this location
+        egg_link = site_packages / f"{pkg_dir.name}.egg-link"
+        if egg_link.exists():
+            linked_path = egg_link.read_text().split("\n")[0].strip()
+            # Handle both direct and src/ layouts
+            if linked_path == str(pkg_dir) or linked_path == str(pkg_dir / "src"):
+                continue  # Already installed, skip
+
+        # Install with pip (uses cache, won't re-download existing deps)
+        print(f"📦 Installing: {pkg_dir.name}")
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-e", str(pkg_dir)],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode != 0:
+            print(f"⚠️  Failed to install {pkg_dir.name}: {result.stderr}")
+
 
 def load_automations():
     """Load automations from all module directories"""
@@ -52,6 +98,7 @@ def load_automations():
                 traceback.print_exc()
 
 async def main():
+    install_libraries()  # Install libraries before loading automations
     load_automations()
     await companion.run()
 

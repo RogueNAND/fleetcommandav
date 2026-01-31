@@ -19,6 +19,17 @@ cd fleetcommandav
 
 The dashboard will be accessible at `http://<your-ip>/`
 
+## Adding Python Libraries
+
+To add third-party Python libraries for use in your automation modules:
+
+```bash
+cd /srv/fleetcommandav/framework/libraries
+git clone https://github.com/example/some-library.git
+```
+
+Libraries are automatically installed on Python container restart. Any package with `pyproject.toml`, `setup.py`, or `setup.cfg` will be detected and installed via pip editable install.
+
 ## Updates
 
 To update an existing installation:
