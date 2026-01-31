@@ -12,10 +12,6 @@ def install_libraries():
     if not libraries_dir.exists():
         return
 
-    # Get site-packages directory for checking .egg-link files
-    import site
-    site_packages = Path(site.getsitepackages()[0])
-
     for pkg_dir in libraries_dir.iterdir():
         if not pkg_dir.is_dir():
             continue
@@ -23,20 +19,20 @@ def install_libraries():
             continue
 
         # Check if it's an installable package
-        is_installable = any(
-            (pkg_dir / f).exists()
-            for f in ("pyproject.toml", "setup.py", "setup.cfg")
-        )
-        if not is_installable:
+        setup_files = [pkg_dir / f for f in ("pyproject.toml", "setup.py", "setup.cfg")]
+        existing_setup_files = [f for f in setup_files if f.exists()]
+        if not existing_setup_files:
             continue
 
-        # Check if already editable-installed to this location
-        egg_link = site_packages / f"{pkg_dir.name}.egg-link"
-        if egg_link.exists():
-            linked_path = egg_link.read_text().split("\n")[0].strip()
-            # Handle both direct and src/ layouts
-            if linked_path == str(pkg_dir) or linked_path == str(pkg_dir / "src"):
-                continue  # Already installed, skip
+        # Check if already installed using our own marker file
+        marker = pkg_dir / ".fcav-installed"
+        if marker.exists():
+            # Check if any setup file is newer than the marker (package was updated)
+            marker_mtime = marker.stat().st_mtime
+            needs_reinstall = any(f.stat().st_mtime > marker_mtime for f in existing_setup_files)
+            if not needs_reinstall:
+                print(f"📦 Cached: {pkg_dir.name}")
+                continue
 
         # Install with pip (uses cache, won't re-download existing deps)
         print(f"📦 Installing: {pkg_dir.name}")
@@ -47,6 +43,9 @@ def install_libraries():
         )
         if result.returncode != 0:
             print(f"⚠️  Failed to install {pkg_dir.name}: {result.stderr}")
+        else:
+            # Create marker file on successful install
+            marker.touch()
 
 
 def load_automations():
