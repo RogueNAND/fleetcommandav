@@ -36,6 +36,7 @@ services:
     user: "1000:1000"
     volumes:
       - ./compose/companion:/companion
+      - ./companion/libraries:/app/module-local-dev
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/ || exit 1"]
       interval: 10s

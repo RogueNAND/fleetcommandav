@@ -30,6 +30,17 @@ git clone https://github.com/example/some-library.git
 
 Libraries are automatically installed on Python container restart. Any package with `pyproject.toml`, `setup.py`, or `setup.cfg` will be detected and installed via pip editable install.
 
+## Adding Companion Modules
+
+To add custom Bitfocus Companion modules (forks, unreleased packages, etc.):
+
+```bash
+cd /srv/fleetcommandav/companion/libraries
+git clone https://github.com/example/companion-module-example.git
+```
+
+Modules are automatically installed on Companion container restart via `yarn install`. Restart with `docker compose restart companion`, then configure the new connection in the Companion UI.
+
 ## Updates
 
 To update an existing installation:
