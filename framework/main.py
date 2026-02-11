@@ -1,8 +1,31 @@
 import asyncio
+import hashlib
+import os
 import subprocess
 import sys
 from pathlib import Path
 from fleetcommand import companion
+
+MARKER_DIR = Path("/tmp/fcav-lib-markers")
+
+
+def _pkg_fingerprint(pkg_dir, setup_files):
+    """Get a fingerprint for the current state of a library package.
+    Uses git commit hash if available, otherwise hashes setup file contents."""
+    git_dir = pkg_dir / ".git"
+    if git_dir.exists():
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=pkg_dir, capture_output=True, text=True
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+
+    # Fallback: hash setup file contents
+    h = hashlib.sha256()
+    for f in sorted(setup_files):
+        h.update(f.read_bytes())
+    return h.hexdigest()
 
 
 def install_libraries():
@@ -11,6 +34,9 @@ def install_libraries():
 
     if not libraries_dir.exists():
         return
+
+    MARKER_DIR.mkdir(exist_ok=True)
+    installed_any = False
 
     for pkg_dir in libraries_dir.iterdir():
         if not pkg_dir.is_dir():
@@ -24,15 +50,13 @@ def install_libraries():
         if not existing_setup_files:
             continue
 
-        # Check if already installed using our own marker file
-        marker = pkg_dir / ".fcav-installed"
-        if marker.exists():
-            # Check if any setup file is newer than the marker (package was updated)
-            marker_mtime = marker.stat().st_mtime
-            needs_reinstall = any(f.stat().st_mtime > marker_mtime for f in existing_setup_files)
-            if not needs_reinstall:
-                print(f"📦 Cached: {pkg_dir.name}")
-                continue
+        # Check if already installed by comparing fingerprints
+        # Markers live in container-local storage (survives restarts, wiped on recreate)
+        marker = MARKER_DIR / pkg_dir.name
+        fingerprint = _pkg_fingerprint(pkg_dir, existing_setup_files)
+        if marker.exists() and marker.read_text() == fingerprint:
+            print(f"📦 Cached: {pkg_dir.name}")
+            continue
 
         # Install with pip (uses cache, won't re-download existing deps)
         print(f"📦 Installing: {pkg_dir.name}")
@@ -44,8 +68,13 @@ def install_libraries():
         if result.returncode != 0:
             print(f"⚠️  Failed to install {pkg_dir.name}: {result.stderr}")
         else:
-            # Create marker file on successful install
-            marker.touch()
+            marker.write_text(fingerprint)
+            installed_any = True
+
+    # Restart process so newly installed packages are available to modules
+    if installed_any:
+        print("🔄 Restarting to load newly installed libraries...")
+        os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
 def load_automations():
