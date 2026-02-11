@@ -897,7 +897,7 @@ class Companion:
 
         snippets = await self._generate_variable_snippets() | await self._generate_action_snippets(await self._call("queryActions"))
 
-        snippet_path = Path("/snippets/python.json")
+        snippet_path = Path("/workspace-vscode/python.code-snippets")
         snippet_path.parent.mkdir(parents=True, exist_ok=True)
 
         def write_file():

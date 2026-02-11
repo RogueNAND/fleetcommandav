@@ -8,6 +8,7 @@
     "editor.insertSpaces": true,
     "editor.trimAutoWhitespace": true,
     "files.trimTrailingWhitespace": true,
+    "editor.bracketPairColorization.independentColorPoolPerBracketType": true,
     "files.insertFinalNewline": true,
     "editor.quickSuggestions": {
         "other": true,

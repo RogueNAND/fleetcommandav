@@ -103,7 +103,7 @@ services:
     volumes:
       - ./framework:/fleetcommand
       - ./modules:/modules
-      - ./compose/editor/settings/snippets:/snippets
+      - ./.vscode:/workspace-vscode
       - ./compose/public/files:/public
     environment:
       - PYTHONUNBUFFERED=1
@@ -115,31 +115,32 @@ services:
       options:
         tag: "python"
 
-  code-server:
-    image: linuxserver/code-server
+  openvscode-server:
+    image: lscr.io/linuxserver/openvscode-server
     container_name: editor
     restart: unless-stopped
     environment:
       - PUID=1000
       - PGID=1000
+      - CODE_ARGS=--default-folder /config/workspace
     volumes:
       - .:/config/workspace:rw
-      - ./compose/editor/settings:/config/data/User/
-      - ./compose/editor/settings/snippets:/config/data/User/snippets
+      - ./compose/editor/openvscode-server:/config/.openvscode-server
+      - ./compose/editor/extensions.sh:/custom-cont-init.d/install-extensions.sh
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.codeserver.rule=PathPrefix(`/`)"
       - "traefik.http.routers.codeserver.entrypoints=codeserver"
       - "traefik.http.routers.codeserver.priority=10"
       - "traefik.http.routers.codeserver.middlewares=simple-auth"
-      - "traefik.http.services.codeserver.loadbalancer.server.port=8443"
+      - "traefik.http.services.codeserver.loadbalancer.server.port=3000"
       - "traefik.http.middlewares.simple-auth.basicauth.users=${ADMIN_USER}:${ADMIN_PASS}"
     mem_limit: 512m
     cpu_shares: 256
     logging:
       driver: journald
       options:
-        tag: "code-server"
+        tag: "openvscode-server"
 
   homer:
     image: b4bz/homer:latest

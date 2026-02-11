@@ -5,6 +5,7 @@
 !.gitignore
 !dashboard/
 !dashboard/**
-!editor/settings/keybindings.json
-!editor/settings/settings.json
-!compose/public/nginx.conf
+!editor/extensions.sh
+!editor/openvscode-server/data/User/keybindings.json
+!editor/openvscode-server/data/User/settings.json
+!public/nginx.conf
