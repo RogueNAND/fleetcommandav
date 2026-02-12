@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+
 from fleetcommand import companion
 
 MARKER_DIR = Path("/tmp/fcav-lib-markers")
@@ -127,6 +128,10 @@ def load_automations():
 
 async def main():
     install_libraries()  # Install libraries before loading automations
+
+    import debugpy
+    debugpy.listen(("0.0.0.0", 5678))
+
     load_automations()
     await companion.run()
 

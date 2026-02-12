@@ -108,6 +108,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/fleetcommand:/modules
+      - PYDEVD_DISABLE_FILE_VALIDATION=1
     mem_limit: 1024m
     cpu_shares: 1536  # second priority after companion
     logging:
@@ -119,6 +120,8 @@ services:
     image: lscr.io/linuxserver/openvscode-server
     container_name: editor
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - PUID=1000
       - PGID=1000
@@ -127,6 +130,7 @@ services:
       - .:/config/workspace:rw
       - ./compose/editor/openvscode-server:/config/.openvscode-server
       - ./compose/editor/extensions.sh:/custom-cont-init.d/install-extensions.sh
+      - /var/run/docker.sock:/var/run/docker.sock
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.codeserver.rule=PathPrefix(`/`)"
@@ -135,7 +139,7 @@ services:
       - "traefik.http.routers.codeserver.middlewares=simple-auth"
       - "traefik.http.services.codeserver.loadbalancer.server.port=3000"
       - "traefik.http.middlewares.simple-auth.basicauth.users=${ADMIN_USER}:${ADMIN_PASS}"
-    mem_limit: 512m
+    mem_limit: 1024m
     cpu_shares: 256
     logging:
       driver: journald

@@ -21,8 +21,18 @@
     "editor.acceptSuggestionOnEnter": "on",
     "editor.suggestSelection": "first",
     "python.analysis.autoImportCompletions": true,
-    "python.analysis.diagnosticMode": "workspace",
-    "python.analysis.typeCheckingMode": "basic",
+    "python.analysis.diagnosticMode": "openFiles",
+    "python.analysis.typeCheckingMode": "off",
+    "python.analysis.extraPaths": [
+        "framework",
+        "modules/base",
+        "modules/community",
+        "modules/user"
+    ],
+    "python.analysis.diagnosticSeverityOverrides": {
+        "reportMissingImports": "none",
+        "reportMissingModuleSource": "none"
+    },
     "python.linting.enabled": true,
     "python.linting.pylintEnabled": true,
     "editor.minimap.enabled": false,
@@ -32,5 +42,18 @@
     },
     "diffEditor.ignoreTrimWhitespace": true,
     "editor.accessibilitySupport": "off",
-    "files.autoSave": "off"
+    "files.autoSave": "off",
+    "terminal.integrated.profiles.linux": {
+        "Python Logs": {
+            "path": "docker",
+            "args": ["logs", "-f", "--tail", "200", "python"],
+            "overrideName": true,
+            "icon": "output",
+            "color": "terminal.ansiGreen"
+        }
+    },
+    "terminal.integrated.defaultProfile.linux": "Python Logs",
+    "files.watcherExclude": {
+        "**/compose/**": true
+    }
 }

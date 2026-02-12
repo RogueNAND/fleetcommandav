@@ -21,6 +21,17 @@ if [ -f "$SERVER_JS" ] && [ -f "$SETTINGS" ]; then
     echo "Patched server-main.js with configurationDefaults from settings.json"
 fi
 
+# --- Docker CLI ---
+# Provides terminal access to other containers (logs, exec, etc.)
+if [ -S /var/run/docker.sock ]; then
+    if ! command -v docker &>/dev/null; then
+        curl -fsSL "https://download.docker.com/linux/static/stable/$(uname -m)/docker-27.5.1.tgz" \
+            | tar xz --strip-components=1 -C /usr/local/bin docker/docker
+        echo "Installed Docker CLI"
+    fi
+    chmod 666 /var/run/docker.sock
+fi
+
 # --- Extensions ---
 # Add extension IDs (publisher.name) to the list below.
 # Available extensions: https://open-vsx.org/
@@ -29,6 +40,8 @@ EXTENSIONS=(
     ms-python.black-formatter
     redhat.vscode-yaml
     mhutchie.git-graph
+    ms-azuretools.vscode-docker
+    ms-pyright.pyright
 )
 
 for ext in "${EXTENSIONS[@]}"; do
