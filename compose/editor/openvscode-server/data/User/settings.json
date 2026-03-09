@@ -25,9 +25,7 @@
     "python.analysis.typeCheckingMode": "off",
     "python.analysis.extraPaths": [
         "framework",
-        "modules/base",
-        "modules/community",
-        "modules/user"
+        "addons"
     ],
     "python.analysis.diagnosticSeverityOverrides": {
         "reportMissingImports": "none",

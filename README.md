@@ -19,16 +19,57 @@ cd fleetcommandav
 
 The dashboard will be accessible at `http://<your-ip>/`
 
-## Adding Python Libraries
+## Addon Management
 
-To add third-party Python libraries for use in your automation modules:
+All automation addons (libraries and modules) live in the `addons/` directory and are declared in `addons.toml`.
+
+### CLI
 
 ```bash
-cd /srv/fleetcommandav/framework/libraries
-git clone https://github.com/example/some-library.git
+./addon.sh list              # List all declared addons
+./addon.sh status            # Show installed state, flag missing deps
+./addon.sh sync              # Fetch/update all addons from their sources
+./addon.sh sync <name>       # Sync a single addon
+./addon.sh add <source>      # Add a new addon (e.g. github:User/repo)
+./addon.sh remove <name>     # Remove an addon from the manifest
+./addon.sh freeze            # Pin all refs to their current commit
 ```
 
-Libraries are automatically installed on Python container restart. Any package with `pyproject.toml`, `setup.py`, or `setup.cfg` will be detected and installed via pip editable install.
+### Adding an addon from GitHub
+
+```bash
+./addon.sh add github:SomeUser/my-addon --type module
+./addon.sh sync my-addon
+docker compose restart python
+```
+
+### Adding a local addon
+
+Create a file or package directly in `addons/`, then register it in `addons.toml`:
+
+```toml
+[addons.my_automation]
+type = "module"
+source = "local"
+```
+
+### Addon types
+
+- **`library`** — Has a `pyproject.toml`. Installed via `pip install -e` on container startup. Provides importable packages (e.g. cuelist, dmxld).
+- **`module`** — A `.py` file or package with `__init__.py`. Auto-imported on startup. Interacts with Companion via decorators and button classes.
+
+### Source types
+
+| Source | Example | Description |
+|--------|---------|-------------|
+| `local` | `source = "local"` | Manually managed, not fetched |
+| `github:` | `source = "github:User/repo"` | Cloned from GitHub |
+| `ssh://` | `source = "ssh://user@host:/path"` | Cloned via SSH (host sync) |
+| Git URL | `source = "https://..."` | Any git remote |
+
+### Load order
+
+Addons declare dependencies via `requires` in `addons.toml`. Libraries are always installed first (pip), then modules are imported in topological order. Undeclared addons on disk load last, alphabetically.
 
 ## Adding Companion Modules
 

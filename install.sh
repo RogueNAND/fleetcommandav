@@ -122,9 +122,15 @@ ensure_compose() {
   sudo find "./compose" -type d -exec chmod 755 {} +
   sudo find "./compose" -type f -exec chmod 644 {} +
 
-  mkdir -p "./modules/base" "./modules/community" "./modules/user"
-  sudo find "./modules" -type d -exec chmod 755 {} +
-  sudo find "./modules" -type f -exec chmod 644 {} +
+  mkdir -p "./addons"
+  sudo find "./addons" -type d -exec chmod 755 {} +
+  sudo find "./addons" -type f -exec chmod 644 {} +
+
+  # Sync addons from manifest (if addon.sh exists)
+  if [[ -x "./addon.sh" ]]; then
+    msg "Syncing addons..."
+    ./addon.sh sync
+  fi
 }
 
 deploy_services() {

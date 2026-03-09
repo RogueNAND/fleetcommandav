@@ -1,3 +1,4 @@
 requests
 websockets
 debugpy
+aiohttp>=3.9

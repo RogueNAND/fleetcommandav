@@ -102,12 +102,13 @@ services:
     init: true
     volumes:
       - ./framework:/fleetcommand
-      - ./modules:/modules
+      - ./addons:/addons
+      - ./addons.toml:/addons/addons.toml:ro
       - ./.vscode:/workspace-vscode
       - ./compose/public/files:/public
     environment:
       - PYTHONUNBUFFERED=1
-      - PYTHONPATH=/fleetcommand:/modules
+      - PYTHONPATH=/fleetcommand:/addons
       - PYDEVD_DISABLE_FILE_VALIDATION=1
     mem_limit: 1024m
     cpu_shares: 1536  # second priority after companion

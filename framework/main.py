@@ -3,11 +3,14 @@ import hashlib
 import os
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 from fleetcommand import companion
 
 MARKER_DIR = Path("/tmp/fcav-lib-markers")
+ADDONS_DIR = Path("/addons")
+MANIFEST_PATH = ADDONS_DIR / "addons.toml"
 
 
 def _pkg_fingerprint(pkg_dir, setup_files):
@@ -30,16 +33,14 @@ def _pkg_fingerprint(pkg_dir, setup_files):
 
 
 def install_libraries():
-    """Install libraries from /fleetcommand/libraries/ using pip editable installs"""
-    libraries_dir = Path("/fleetcommand/libraries")
-
-    if not libraries_dir.exists():
+    """Install library addons from /addons/ using pip editable installs."""
+    if not ADDONS_DIR.exists():
         return
 
     MARKER_DIR.mkdir(exist_ok=True)
     installed_any = False
 
-    for pkg_dir in libraries_dir.iterdir():
+    for pkg_dir in ADDONS_DIR.iterdir():
         if not pkg_dir.is_dir():
             continue
         if pkg_dir.name.startswith(("_", ".")):
@@ -72,67 +73,104 @@ def install_libraries():
             marker.write_text(fingerprint)
             installed_any = True
 
-    # Restart process so newly installed packages are available to modules
+    # Restart process so newly installed packages are available to addons
     if installed_any:
         print("🔄 Restarting to load newly installed libraries...")
         os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
-def load_automations():
-    """Load automations from all module directories"""
-    module_sources = [
-        Path("/modules/base"),
-        Path("/modules/community"),
-        Path("/modules/user"),
-    ]
-
-    for source_dir in module_sources:
-        if not source_dir.exists():
-            print(f"⚠️  Module directory not found: {source_dir}")
+def _load_order():
+    """Determine module load order from addons.toml, with topological sort on requires.
+    Returns a list of addon names (module-type only). Addons on disk but not in
+    manifest are appended alphabetically at the end."""
+    # Discover module-type addons on disk (non-library: no pyproject.toml/setup.py/setup.cfg)
+    on_disk = set()
+    for p in ADDONS_DIR.iterdir():
+        if p.name.startswith(("_", ".")):
             continue
+        is_pkg = p.is_dir() and (p / "__init__.py").exists()
+        is_file = p.is_file() and p.suffix == ".py"
+        is_library = p.is_dir() and any(
+            (p / f).exists() for f in ("pyproject.toml", "setup.py", "setup.cfg")
+        )
+        if (is_pkg or is_file) and not is_library:
+            on_disk.add(p.stem if is_file else p.name)
 
-        # Add to path for imports
-        sys.path.insert(0, str(source_dir))
+    if not MANIFEST_PATH.exists():
+        return sorted(on_disk)
 
-        # Load all .py files (except those starting with _)
-        for file_path in source_dir.glob("*.py"):
-            if file_path.name.startswith("_"):
-                continue
+    with open(MANIFEST_PATH, "rb") as f:
+        manifest = tomllib.load(f)
 
-            module_name = file_path.stem
-            try:
-                __import__(module_name)
-                print(f"✅ Loaded: {module_name} (from {source_dir.name})")
-            except Exception as e:
-                print(f"❌ Failed to load {module_name}: {e}")
-                import traceback
-                traceback.print_exc()
+    addons = manifest.get("addons", {})
 
-        # Load package directories (directories with __init__.py)
-        for dir_path in source_dir.iterdir():
-            if not dir_path.is_dir():
-                continue
-            if dir_path.name.startswith("_"):
-                continue
-            if not (dir_path / "__init__.py").exists():
-                continue
+    # Collect module-type addons from manifest that exist on disk
+    manifest_modules = []
+    requires_map = {}
+    for name, config in addons.items():
+        if config.get("type") == "library":
+            continue
+        if name in on_disk:
+            manifest_modules.append(name)
+            # Only include requires that are also modules (not libraries)
+            module_requires = [
+                r for r in config.get("requires", [])
+                if r in addons and addons[r].get("type") != "library"
+            ]
+            if module_requires:
+                requires_map[name] = module_requires
 
-            module_name = dir_path.name
-            try:
-                __import__(module_name)
-                print(f"✅ Loaded: {module_name}/ (from {source_dir.name})")
-            except Exception as e:
-                print(f"❌ Failed to load {module_name}/: {e}")
-                import traceback
-                traceback.print_exc()
+    # Topological sort (Kahn's algorithm)
+    in_degree = {n: 0 for n in manifest_modules}
+    dependents = {n: [] for n in manifest_modules}
+    for name, deps in requires_map.items():
+        for dep in deps:
+            if dep in in_degree:
+                in_degree[name] += 1
+                dependents[dep].append(name)
+
+    queue = sorted(n for n in manifest_modules if in_degree[n] == 0)
+    ordered = []
+    while queue:
+        node = queue.pop(0)
+        ordered.append(node)
+        for dep in sorted(dependents.get(node, [])):
+            in_degree[dep] -= 1
+            if in_degree[dep] == 0:
+                queue.append(dep)
+
+    # Append on-disk modules not in manifest (alphabetical)
+    for name in sorted(on_disk - set(ordered)):
+        ordered.append(name)
+
+    return ordered
+
+
+def load_addons():
+    """Load module-type addons from /addons/ in dependency order."""
+    if not ADDONS_DIR.exists():
+        print(f"⚠️  Addons directory not found: {ADDONS_DIR}")
+        return
+
+    sys.path.insert(0, str(ADDONS_DIR))
+
+    for module_name in _load_order():
+        try:
+            __import__(module_name)
+            print(f"✅ Loaded: {module_name}")
+        except Exception as e:
+            print(f"❌ Failed to load {module_name}: {e}")
+            import traceback
+            traceback.print_exc()
+
 
 async def main():
-    install_libraries()  # Install libraries before loading automations
+    install_libraries()  # Install library addons before loading modules
 
     import debugpy
     debugpy.listen(("0.0.0.0", 5678))
 
-    load_automations()
+    load_addons()
     await companion.run()
 
 if __name__ == "__main__":

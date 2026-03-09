@@ -1,0 +1,4 @@
+# Addon content is managed by addon.sh, not tracked in the FleetCommandAV repo.
+# Addons either have their own git repos or are local user files.
+*
+!.gitignore
