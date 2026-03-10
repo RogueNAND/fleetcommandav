@@ -37,6 +37,70 @@ class Event:
     def __repr__(self):
         return f"Event<{self.connection}.{self.variable} | {self.value}>"
 
+# --- Button option field descriptors ---
+# Declare as class attributes on Button subclasses. Companion renders them in its UI.
+
+class _FieldDescriptor:
+    """Base for button option field descriptors."""
+    pass
+
+class TextField(_FieldDescriptor):
+    def __init__(self, label, default="", placeholder=""):
+        self.label = label; self.default = default; self.placeholder = placeholder
+    def to_schema(self, id):
+        s = {"type": "textinput", "id": id, "label": self.label, "default": self.default}
+        if self.placeholder: s["placeholder"] = self.placeholder
+        return s
+
+class NumberField(_FieldDescriptor):
+    def __init__(self, label, default=0, min=0, max=2**31, step=None):
+        self.label = label; self.default = default; self.min = min; self.max = max; self.step = step
+    def to_schema(self, id):
+        s = {"type": "number", "id": id, "label": self.label, "default": self.default, "min": self.min, "max": self.max}
+        if self.step is not None: s["step"] = self.step
+        return s
+
+class Checkbox(_FieldDescriptor):
+    def __init__(self, label, default=False):
+        self.label = label; self.default = default
+    def to_schema(self, id):
+        return {"type": "checkbox", "id": id, "label": self.label, "default": self.default}
+
+class Dropdown(_FieldDescriptor):
+    def __init__(self, label, choices, default=None):
+        self.label = label; self.choices = choices
+        self.default = default
+    def to_schema(self, id):
+        choices = [{"id": c, "label": c} if isinstance(c, str) else {"id": c[0], "label": c[1]} for c in self.choices]
+        default = self.default or (choices[0]["id"] if choices else "")
+        return {"type": "dropdown", "id": id, "label": self.label, "default": default, "choices": choices}
+
+class ColorPicker(_FieldDescriptor):
+    def __init__(self, label, default=0):
+        self.label = label; self.default = default
+    def to_schema(self, id):
+        return {"type": "colorpicker", "id": id, "label": self.label, "default": self.default}
+
+class _OptionsProxy:
+    """Attribute-style access to per-button options configured in Companion UI."""
+    def __init__(self, data, schema_fields):
+        self._data = data
+        self._schema_fields = schema_fields
+
+    def __getattr__(self, name):
+        if name.startswith('_'):
+            raise AttributeError(name)
+        if name in self._data:
+            return self._data[name]
+        for field_name, descriptor in self._schema_fields:
+            if field_name == name:
+                return descriptor.default
+        raise AttributeError(f"No option '{name}'")
+
+    def __repr__(self):
+        items = {name: getattr(self, name) for name, _ in self._schema_fields}
+        return f"Options({items})"
+
 iteration_generators = {
     'page': lambda b: b.page,
     'col': lambda b: b.col,
@@ -48,6 +112,9 @@ class Companion:
 
     class Button:
 
+        label = None  # Override for Companion dropdown display name
+        use_iterator = False  # Opt-in for iterator/manualIteration fields
+
         def __init__(self, companion, data: dict, compute_iterators=True):
             self._last_data = data
 
@@ -57,14 +124,16 @@ class Companion:
             self.page: int
             self.row: int
             self.col: int
-            self.iterator: str
-            self.iteration: int = data['options'].get('manualIteration') or 0
+            self.iterator: str = 'manual'
+            self.iteration: int = 0
             self.update_control(data)
+            schema_fields = self.__class__._get_schema()
+            self._options = _OptionsProxy(data.get('options', {}), schema_fields)
 
             companion.companion_buttons[self.control_id] = self
             companion.companion_buttons_by_page_id_rowcol[self.page][self.id][(self.row, self.col)] = self
 
-            if compute_iterators:
+            if compute_iterators and self.__class__.use_iterator:
                 companion.recompute_button_iterations(self.page, apply_button_id=self.id)
 
         def update_control(self, data):
@@ -73,13 +142,22 @@ class Companion:
             self.page: int = int(_location['pageNumber'])
             self.row: int = int(_location['row'])
             self.col: int = int(_location['column'])
-            self.iterator = _options['iterator'] or 'manual'
-            if self.iterator == 'manual':
-                self.iteration: int = _options.get('manualIteration') or 0
+            if self.__class__.use_iterator:
+                self.iterator = _options.get('iterator') or 'manual'
+                if self.iterator == 'manual':
+                    self.iteration: int = _options.get('manualIteration') or 0
+            if hasattr(self, '_options'):
+                schema_fields = self.__class__._get_schema()
+                self._options = _OptionsProxy(data.get('options', {}), schema_fields)
 
         @property
         def page_name(self):
             return self.companion.var("internal", f"page_number_{self.page}_name")
+
+        @property
+        def options(self):
+            """Per-button options configured in Companion UI."""
+            return self._options
 
         async def on_init(self):
             pass
@@ -93,6 +171,10 @@ class Companion:
         async def on_rotate(self, direction: bool):
             pass
 
+        async def on_destroy(self):
+            """Called when button is removed or replaced. Override for cleanup."""
+            pass
+
         async def set_bg_color(self, r, g, b):
             await self.companion.action("internal", "bgcolor", options={"color": str(self._rgb_to_int(r, g, b)), "location_target": "text", "location_text": f"{self.page}/{self.row}/{self.col}"}, wait=False)
 
@@ -101,6 +183,15 @@ class Companion:
 
         async def set_text_color(self, r, g, b):
             await self.companion.action("internal", "textcolor", options={"color": str(self._rgb_to_int(r, g, b)), "location_target": "text", "location_text": f"{self.page}/{self.row}/{self.col}"}, wait=False)
+
+        async def update(self, *, text=None, bg=None, text_color=None):
+            """Batch update button appearance. Colors as (r, g, b) tuples (0-1 scale)."""
+            if text is not None:
+                await self.set_text(text)
+            if bg is not None:
+                await self.set_bg_color(*bg)
+            if text_color is not None:
+                await self.set_text_color(*text_color)
 
         async def trigger_press(self, force=False):
             await self.companion.action("internal", "button_press", options={"location_target": "this", "location_text": "", "location_expression": "", "force": force})
@@ -126,14 +217,24 @@ class Companion:
             return res
 
         @classmethod
-        def _build_classes(cls, classes: dict[str, type["Companion.Button"]]):
-            # Add self
-            class_name = cls.__name__
-            if class_name in classes:
-                raise RuntimeError(f"Button {class_name} already exists")
+        def _get_schema(cls):
+            """Extract option field schemas from class-level descriptors."""
+            fields = []
+            for name in dir(cls):
+                if name.startswith('_'):
+                    continue
+                attr = getattr(cls, name, None)
+                if isinstance(attr, _FieldDescriptor):
+                    fields.append((name, attr))
+            return fields
 
-            # Recursively add subclasses
-            classes[class_name] = cls
+        @classmethod
+        def _build_classes(cls, classes: dict[str, type["Companion.Button"]]):
+            class_name = cls.__name__
+            if class_name != "Button":
+                if class_name in classes:
+                    raise RuntimeError(f"Button {class_name} already exists")
+                classes[class_name] = cls
             for subclass in cls.__subclasses__():
                 subclass._build_classes(classes)
 
@@ -799,8 +900,11 @@ class Companion:
                 if payload := data.get("payload"):
                     control_id = payload['controlId']
                     existing_button = self.companion_buttons.get(control_id)
+                    if not existing_button:
+                        await self._add_button(payload)
+                        continue
 
-                    if existing_button.id == payload.get('options', {}).get('pythonClassId'):
+                    if existing_button.id == payload.get('definitionId'):
                         existing_button.update_control(payload)
                     else:
                         await self._replace_button(control_id, payload)
@@ -814,8 +918,11 @@ class Companion:
                 print("🔔 Unknown event:", data)
 
     async def _replace_button(self, old_button_id: str, new_button_data: dict):
-        # Delete old button
         if old_button := self.companion_buttons.get(old_button_id):
+            try:
+                await old_button.on_destroy()
+            except Exception:
+                print(f"⚠️ Error in on_destroy for {old_button.id}")
             del self.companion_buttons[old_button.control_id]
             del self.companion_buttons_by_page_id_rowcol[old_button.page][old_button.id][(old_button.row, old_button.col)]
             self.recompute_button_iterations(old_button.page, apply_button_id=old_button.id)
@@ -849,7 +956,7 @@ class Companion:
             self.recompute_button_iterations(page)
 
     async def _add_button(self, data: dict[str, Any], compute_iterators=True):
-        python_id = data.get('options', {}).get('pythonClassId')
+        python_id = data.get('definitionId')
         if button_class := self.button_classes.get(python_id):
             button = button_class(self, data, compute_iterators=compute_iterators)
             await button.on_init()
@@ -1085,7 +1192,40 @@ class Companion:
                     self._receiver_task = asyncio.create_task(self._recv_loop())
                     self._run_task = asyncio.create_task(self._run_loop())
 
-                    # initial variable snapshot
+                    # Register button classes as Python action definitions
+                    actions = {}
+                    iterator_options = [
+                        {"type": "dropdown", "id": "iterator", "label": "Iterator", "default": "pagelrtb", "choices": [
+                            {"id": "pagelrtb", "label": "In Page (Left to Right, Top to Bottom)"},
+                            {"id": "pagetblr", "label": "In Page (Top to Bottom, Left to Right)"},
+                            {"id": "page", "label": "Page #"},
+                            {"id": "col", "label": "Column #"},
+                            {"id": "row", "label": "Row #"},
+                            {"id": "manual", "label": "Manual"},
+                        ]},
+                        {"type": "number", "id": "manualIteration", "label": "Iteration", "default": 0, "min": 0, "max": 2**31,
+                         "isVisibleUi": {"type": "expression", "fn": '$(options:iterator) == "manual"'}},
+                    ]
+                    for class_name, cls in self.button_classes.items():
+                        if not cls.label:
+                            continue
+                        fields = cls._get_schema()
+                        class_options = [desc.to_schema(name) for name, desc in fields]
+                        if cls.use_iterator:
+                            class_options += iterator_options
+                        actions[class_name] = {
+                            "label": cls.label,
+                            "description": f"Software defined button ({class_name})",
+                            "options": class_options,
+                        }
+                    if actions:
+                        try:
+                            await self._call("registerPythonActions", actions=actions)
+                            print(f"🔘 Registered {len(actions)} Python button actions")
+                        except Exception as e:
+                            print(f"⚠️ Failed to register Python actions: {e}")
+
+                    # Initial snapshots
                     await self._send_queue.put({
                         "id": 1,
                         "method": "queryVariables"
