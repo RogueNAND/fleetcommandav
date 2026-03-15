@@ -74,6 +74,99 @@ ensure_repo() {
   git config --local core.autocrlf input
 }
 
+checkbox_select() {
+  local -n _result=$1
+  local prompt_text=$2
+  local items_csv=$3
+  local prechecked_csv=${4:-}
+
+  # Parse items
+  IFS=',' read -ra items <<< "$items_csv"
+  local count=${#items[@]}
+  [[ $count -eq 0 ]] && { _result=""; return; }
+
+  # Parse pre-checked
+  local -A pre=()
+  if [[ -n "$prechecked_csv" ]]; then
+    IFS=',' read -ra _pre <<< "$prechecked_csv"
+    for p in "${_pre[@]}"; do pre["$p"]=1; done
+  fi
+
+  # Init checked state
+  local checked=()
+  for item in "${items[@]}"; do
+    [[ -n "${pre[$item]+x}" ]] && checked+=(1) || checked+=(0)
+  done
+
+  local cursor=0
+
+  # Hide cursor, ensure restore on exit
+  printf '\e[?25l' >/dev/tty
+  local _old_trap
+  _old_trap=$(trap -p INT)
+  trap 'printf "\e[?25h" >/dev/tty; exit 130' INT
+
+  # Draw function
+  _draw() {
+    local i
+    for (( i=0; i<count; i++ )); do
+      local mark=" "
+      [[ ${checked[$i]} -eq 1 ]] && mark="x"
+      if [[ $i -eq $cursor ]]; then
+        printf '\e[7m  [%s] %s\e[0m\e[K\n' "$mark" "${items[$i]}" >/dev/tty
+      else
+        printf '  [%s] %s\e[K\n' "$mark" "${items[$i]}" >/dev/tty
+      fi
+    done
+    printf '\e[90m  ↑/↓: move  Space: toggle  Enter: confirm\e[0m\e[K' >/dev/tty
+  }
+
+  # Initial draw
+  printf '\e[36m%s\e[0m\n' "$prompt_text" >/dev/tty
+  _draw
+
+  # Input loop
+  while true; do
+    local key
+    IFS= read -rsN1 key </dev/tty
+
+    case "$key" in
+      $'\x1b')
+        local seq
+        read -rsN2 -t 0.1 seq </dev/tty || true
+        case "$seq" in
+          '[A') cursor=$(( (cursor - 1 + count) % count )) ;;
+          '[B') cursor=$(( (cursor + 1) % count )) ;;
+        esac
+        ;;
+      ' ')
+        checked[$cursor]=$(( 1 - checked[$cursor] ))
+        ;;
+      $'\n'|$'\r'|'')
+        break
+        ;;
+    esac
+
+    # Redraw (move up count+1 lines for the items + footer)
+    printf '\e[%dA\r' "$count" >/dev/tty
+    _draw
+  done
+
+  # Show cursor
+  printf '\e[?25h\n' >/dev/tty
+  eval "$_old_trap" 2>/dev/null || trap - INT
+
+  # Build result
+  local result=""
+  for (( i=0; i<count; i++ )); do
+    if [[ ${checked[$i]} -eq 1 ]]; then
+      [[ -n "$result" ]] && result+=","
+      result+="${items[$i]}"
+    fi
+  done
+  _result="$result"
+}
+
 select_profiles() {
   # Check if profiles already set in .env
   local existing_profiles=""
@@ -88,12 +181,9 @@ select_profiles() {
     available_profiles=$(grep -A5 'profiles:' docker-compose.yml 2>/dev/null | awk '/^[[:space:]]+-/ {gsub(/^[[:space:]]*-[[:space:]]*|[[:space:]]*$|[\r]/, ""); if ($0 ~ /^[a-z]+$/) print}' | sort -u | paste -sd,)
 
     if [[ -n "$available_profiles" ]]; then
-      msg "Available profiles: ${available_profiles}"
+      checkbox_select PROFILES "Select profiles to enable:" "$available_profiles" "$existing_profiles"
     fi
 
-    # Inline prompt
-    printf "\e[36mProfiles to enable (comma-separated) [${existing_profiles}]: \e[0m" > /dev/tty
-    read -r PROFILES < /dev/tty || PROFILES=""
     [[ -z "$PROFILES" && -n "$existing_profiles" ]] && PROFILES="$existing_profiles"
   elif [[ -z "$PROFILES" && -n "$existing_profiles" ]]; then
     PROFILES="$existing_profiles"
@@ -117,14 +207,8 @@ select_profiles() {
 }
 
 ensure_compose() {
-  mkdir -p "./compose"
-  sudo chown -R "1000:1000" "./compose"
-  sudo find "./compose" -type d -exec chmod 755 {} +
-  sudo find "./compose" -type f -exec chmod 644 {} +
-
-  mkdir -p "./addons"
-  sudo find "./addons" -type d -exec chmod 755 {} +
-  sudo find "./addons" -type f -exec chmod 644 {} +
+  mkdir -p "./compose" "./addons"
+  sudo chown -R "$(id -u):$(id -g)" "./compose" "./addons"
 
   # Sync addons from manifest (if addon.sh exists)
   if [[ -x "./addon.sh" ]]; then
@@ -140,7 +224,7 @@ deploy_services() {
   sudo docker compose pull
   sudo docker compose up -d --build
 
-  sudo chown -R "1000:1000" "./compose"
+  sudo chown -R "$(id -u):$(id -g)" "./compose"
 
   msg "Services deployed successfully."
 }

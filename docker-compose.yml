@@ -53,7 +53,6 @@ services:
   ontime:
     image: getontime/ontime:latest
     profiles:
-      - all
       - ontime
     container_name: ontime
     restart: unless-stopped
@@ -77,8 +76,7 @@ services:
     container_name: homeassistant
     image: "ghcr.io/home-assistant/home-assistant:stable"
     profiles:
-      - all
-      - ha
+      - homeassistant
     restart: unless-stopped
     ports:
       - "8123:8123"
@@ -105,6 +103,7 @@ services:
       - ./addons:/addons
       - ./addons.toml:/addons/addons.toml:ro
       - ./.vscode:/workspace-vscode
+      - ./compose/python:/data
       - ./compose/public/files:/public
     environment:
       - PYTHONUNBUFFERED=1
@@ -119,6 +118,8 @@ services:
 
   openvscode-server:
     image: lscr.io/linuxserver/openvscode-server
+    profiles:
+      - codeserver
     container_name: editor
     restart: unless-stopped
     extra_hosts:
@@ -170,7 +171,6 @@ services:
   grist:
     image: gristlabs/grist
     profiles:
-      - all
       - sheets
     container_name: grist
     restart: unless-stopped
@@ -213,7 +213,6 @@ services:
   contentshare:
     image: tanq16/local-content-share:main
     profiles:
-      - all
       - share
     container_name: local-content-share
     restart: unless-stopped
@@ -232,7 +231,6 @@ services:
   public_http:
     image: nginx:alpine
     profiles:
-      - all
       - public
     container_name: public
     restart: unless-stopped
