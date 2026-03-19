@@ -58,6 +58,18 @@ source = "local"
 - **`library`** — Has a `pyproject.toml`. Installed via `pip install -e` on container startup. Provides importable packages (e.g. cuelist, dmxld).
 - **`module`** — A `.py` file or package with `__init__.py`. Auto-imported on startup. Interacts with Companion via decorators and button classes.
 
+### Addon data storage
+
+Addon data (timelines, uploads, configs) is stored separately from code in `./compose/python/`, mounted at `/data` inside the Python container. Use the framework helper to get a namespaced directory:
+
+```python
+from fleetcommand.storage import get_data_dir
+
+data_dir = get_data_dir("my_addon")  # -> /data/my_addon/
+```
+
+This keeps code (`./addons/`) and data (`./compose/python/`) cleanly separated — back up `./compose/` to capture all service data.
+
 ### Source types
 
 | Source | Example | Description |
