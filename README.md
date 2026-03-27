@@ -6,8 +6,10 @@ Built off the backs of open source broadcast ecosystems, this project attemps to
 Run this command to install FleetCommandAV:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/RogueNAND/fleetcommandav/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/RogueNAND/fleetcommandav/main/install.sh) -b main
 ```
+
+Use `-b <tag>` to install a specific release (e.g. `-b v1.0`).
 
 Or clone and run locally:
 
@@ -100,6 +102,7 @@ To update an existing installation:
 
 ```bash
 cd /srv/fleetcommandav
-git pull
-./install.sh
+./install.sh -b main
 ```
+
+Omit `-b` to re-run setup on the current branch without pulling.

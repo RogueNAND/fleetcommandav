@@ -29,6 +29,7 @@ die()      { echo -e "\e[31m$*\e[0m" >&2; exit 1; }
 # Configuration ----------------------------------------------------------------
 
 REPO_URL="https://github.com/RogueNAND/fleetcommandav.git"
+BRANCH=""
 PROFILES=""
 TARGET_DIR=""
 
@@ -46,6 +47,7 @@ fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    -b|--branch) BRANCH="${2:-}"; shift 2;;
     -p|--profiles) PROFILES="${2:-}"; shift 2;;
     *) die "Unknown flag: $1";;
   esac
@@ -62,10 +64,16 @@ check_shell_and_user() {
 
 ensure_repo() {
   if [[ ! -d "$TARGET_DIR/.git" ]]; then
-    msg "Cloning repository to ${TARGET_DIR}..."
+    [[ -n "$BRANCH" ]] || die "-b <branch|tag> is required for fresh installs."
+    msg "Cloning repository (${BRANCH}) to ${TARGET_DIR}..."
     sudo mkdir -p "$(dirname "$TARGET_DIR")"
-    sudo git clone "$REPO_URL" "$TARGET_DIR"
+    sudo git clone -b "$BRANCH" "$REPO_URL" "$TARGET_DIR"
     sudo chown -R "$(id -u):$(id -g)" "$TARGET_DIR"
+  elif [[ -n "$BRANCH" ]]; then
+    msg "Switching to ${BRANCH}..."
+    git -C "$TARGET_DIR" fetch origin
+    git -C "$TARGET_DIR" checkout "$BRANCH"
+    git -C "$TARGET_DIR" pull origin "$BRANCH" 2>/dev/null || true
   fi
 
   cd "$TARGET_DIR"
@@ -241,7 +249,11 @@ show_access_info() {
   msg "Access the dashboard at:"
   msg "  http://${ip:-localhost}/"
   echo
-  msg "To update: cd ${TARGET_DIR} && git pull && ./install.sh"
+  if [[ -n "$BRANCH" ]]; then
+    msg "To update: cd ${TARGET_DIR} && ./install.sh -b ${BRANCH}"
+  else
+    msg "To update: cd ${TARGET_DIR} && ./install.sh"
+  fi
   echo
 }
 
