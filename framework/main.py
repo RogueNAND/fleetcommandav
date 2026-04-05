@@ -13,6 +13,58 @@ ADDONS_DIR = Path("/addons")
 MANIFEST_PATH = ADDONS_DIR / "addons.toml"
 
 
+def _resolve_source(source):
+    """Convert shorthand source to a git-clonable URL. Returns None for local."""
+    if source == "local":
+        return None
+    if source.startswith("github:"):
+        return f"https://github.com/{source[7:]}.git"
+    return source
+
+
+def _git(args, cwd=None):
+    """Run a git command, return (success, stdout)."""
+    result = subprocess.run(
+        ["git"] + args, cwd=cwd, capture_output=True, text=True
+    )
+    return result.returncode == 0, result.stdout.strip()
+
+
+def sync_addons():
+    """Clone missing remote addons and update existing ones to their declared ref."""
+    if not MANIFEST_PATH.exists():
+        return
+
+    with open(MANIFEST_PATH, "rb") as f:
+        manifest = tomllib.load(f)
+
+    for name, config in manifest.get("addons", {}).items():
+        url = _resolve_source(config.get("source", "local"))
+        if url is None:
+            continue
+
+        ref = config.get("ref", "main")
+        dest = ADDONS_DIR / name
+
+        if not dest.exists():
+            print(f"📥 Cloning {name} from {config['source']}...")
+            ok, _ = _git(["clone", url, str(dest)])
+            if not ok:
+                print(f"⚠️  Failed to clone {name}")
+                continue
+            _git(["checkout", ref], cwd=dest)
+        elif (dest / ".git").exists():
+            print(f"🔄 Updating {name} to {ref}...")
+            _git(["fetch", "origin"], cwd=dest)
+            # If ref is a remote branch, pull; otherwise just checkout
+            ok, _ = _git(["rev-parse", "--verify", f"origin/{ref}"], cwd=dest)
+            if ok:
+                _git(["checkout", ref], cwd=dest)
+                _git(["pull", "--ff-only", "origin", ref], cwd=dest)
+            else:
+                _git(["checkout", ref], cwd=dest)
+
+
 def _pkg_fingerprint(pkg_dir, setup_files):
     """Get a fingerprint for the current state of a library package.
     Uses git commit hash if available, otherwise hashes setup file contents."""
@@ -165,6 +217,7 @@ def load_addons():
 
 
 async def main():
+    sync_addons()        # Fetch remote addons from manifest
     install_libraries()  # Install library addons before loading modules
 
     import debugpy

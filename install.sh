@@ -217,12 +217,6 @@ select_profiles() {
 ensure_compose() {
   mkdir -p "./compose" "./compose/python" "./addons"
   sudo chown -R "$(id -u):$(id -g)" "./compose" "./addons"
-
-  # Sync addons from manifest (if addon.sh exists)
-  if [[ -x "./addon.sh" ]]; then
-    msg "Syncing addons..."
-    ./addon.sh sync
-  fi
 }
 
 deploy_services() {

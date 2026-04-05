@@ -101,7 +101,6 @@ services:
     volumes:
       - ./framework:/fleetcommand
       - ./addons:/addons
-      - ./addons.toml:/addons/addons.toml:ro
       - ./.vscode:/workspace-vscode
       - ./compose/python:/data
       - ./compose/public/files:/public
