@@ -102,6 +102,7 @@ services:
       - ./framework:/fleetcommand
       - ./addons:/addons
       - ./.vscode:/workspace-vscode
+      - ~/.ssh:/home/fcav/.ssh:ro
       - ./compose/python:/data
       - ./compose/public/files:/public
     environment:
