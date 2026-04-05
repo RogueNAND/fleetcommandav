@@ -1,6 +1,5 @@
 import asyncio
 import hashlib
-import os
 import subprocess
 import sys
 import tomllib
@@ -125,10 +124,7 @@ def install_libraries():
             marker.write_text(fingerprint)
             installed_any = True
 
-    # Restart process so newly installed packages are available to addons
-    if installed_any:
-        print("🔄 Restarting to load newly installed libraries...")
-        os.execv(sys.executable, [sys.executable] + sys.argv)
+    return installed_any
 
 
 def _load_order():
@@ -217,9 +213,6 @@ def load_addons():
 
 
 async def main():
-    sync_addons()        # Fetch remote addons from manifest
-    install_libraries()  # Install library addons before loading modules
-
     import debugpy
     debugpy.listen(("0.0.0.0", 5678))
 

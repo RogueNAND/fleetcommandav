@@ -6,8 +6,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install watchdog for hot-reload
-RUN pip install --no-cache-dir watchdog[watchmedo]
+# Install watchfiles for hot-reload
+RUN pip install --no-cache-dir watchfiles
 
 COPY . /fleetcommand
 
@@ -17,11 +17,5 @@ RUN useradd -u 1000 -m fcav \
     && chown -R fcav /usr/local/lib/python3.13/site-packages/ /usr/local/bin/
 USER fcav
 
-# Watch framework and addons for changes
-CMD ["watchmedo", "auto-restart", \
-    "--directory=/fleetcommand", \
-    "--directory=/addons", \
-    "--pattern=*.py", \
-    "--recursive", \
-    "--", \
-    "python", "-Xfrozen_modules=off", "/fleetcommand/main.py"]
+# Watcher runs sync/install, then watches for changes and restarts main.py
+CMD ["python", "-Xfrozen_modules=off", "/fleetcommand/watcher.py"]
